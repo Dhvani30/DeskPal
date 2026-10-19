@@ -264,6 +264,7 @@ struct BuzzerStep { uint16_t onMs; uint16_t offMs; };
 struct WeatherSnapshot {
   bool ok;
   int weatherHttp, forecastHttp;
+  long timezoneOffset;
   float temperature, feelsLike;
   int humidity;
   char main[16], description[32];
@@ -318,7 +319,7 @@ bool requestWeatherFetch();
 int currentPage = 0;
 bool highBrightness = true;
 bool quietMode = false;
-bool micMuted = true; // Explicit user action is required before reading microphone samples.
+bool micMuted = false; // Start the level monitor enabled; hold the button on the eyes page to mute it.
 unsigned long lastPageSwitch = 0;
 
 bool lastTouch = false;
@@ -373,8 +374,8 @@ unsigned long lastPressSample = 0;
 float lastInferenceMs = 0.0f;
 float infAvg = 0.0f;
 
-char insights[6][80];
-int insightCount = 0;
+char insightTitle[32] = "ROOM CHECK";
+char insightAction[48] = "Waiting for sensor data";
 unsigned long lastSensorRead = 0;
 unsigned long lastInsightGen = 0;
 
@@ -769,64 +770,30 @@ bool isRelativelyCold() {
   ClimateParams z = getClimateParams();
   return envTemp < (z.tMid - z.tHalf);
 }
-void addInsightOnce(const char* s) {
-  for (int i = 0; i < insightCount; i++) if (strcmp(insights[i], s) == 0) return;
-  if (insightCount < 6) strlcpy(insights[insightCount++], s, sizeof(insights[0]));
-}
 void generateInsights() {
-  insightCount = 0;
-  char buf[80];
-  if (anomalyActive && anomalyMsg[0] != '\0') addInsightOnce(anomalyMsg);
-  if (batteryPct < BATT_LOW_PCT) addInsightOnce("Battery low! Feed Pal some charge!");
-  struct tm t; currentTm(&t);
-  int hr = t.tm_hour;
-  const char* tod = (hr >= 5 && hr < 12) ? "morning" : (hr < 17) ? "afternoon" : (hr < 21) ? "evening" : "night";
-  if (!isnan(envTemp)) {
-    ClimateParams z = getClimateParams();
-    if (envTemp < z.tMid - z.tHalf) {
-      snprintf(buf, sizeof(buf), "Brrr! Cold for a %s %s - Pal might catch a cold! Warm up?", climateName(), tod);
-      addInsightOnce(buf);
-    } else if (envTemp > z.tMid + z.tHalf) {
-      snprintf(buf, sizeof(buf), "Hot %s! Hydrate or Pal gets grumpy!", tod);
-      addInsightOnce(buf);
-    } else {
-      snprintf(buf, sizeof(buf), "Cozy %s temps - perfect for deep work!", tod);
-      addInsightOnce(buf);
-    }
+  if (!sensorsOk || isnan(envTemp) || isnan(envHum)) {
+    strlcpy(insightTitle, "ROOM CHECK", sizeof(insightTitle));
+    strlcpy(insightAction, "Sensor data unavailable", sizeof(insightAction));
+    return;
   }
-  if (!isnan(envHum)) {
-    if (envHum > 88) addInsightOnce("Super muggy! Ventilate or the desk gets sticky!");
-    else if (envHum < 25) addInsightOnce("Dry air alert! Sip water, human!");
-    else {
-      snprintf(buf, sizeof(buf), "Humidity %d%% - right in the comfy band!", (int)envHum);
-      addInsightOnce(buf);
-    }
+  ClimateParams z = getClimateParams();
+  float tMin = z.tMid - z.tHalf, tMax = z.tMid + z.tHalf;
+  if (envTemp > tMax) {
+    strlcpy(insightTitle, "ROOM IS WARM", sizeof(insightTitle));
+    strlcpy(insightAction, "Ventilate or cool the room", sizeof(insightAction));
+  } else if (envTemp < tMin) {
+    strlcpy(insightTitle, "ROOM IS COOL", sizeof(insightTitle));
+    strlcpy(insightAction, "Add warmth if you need it", sizeof(insightAction));
+  } else if (envHum > z.hMid + z.hHalf) {
+    strlcpy(insightTitle, "HUMIDITY IS HIGH", sizeof(insightTitle));
+    strlcpy(insightAction, "Ventilate the room", sizeof(insightAction));
+  } else if (envHum < z.hMid - z.hHalf) {
+    strlcpy(insightTitle, "AIR IS DRY", sizeof(insightTitle));
+    strlcpy(insightAction, "Consider adding humidity", sizeof(insightAction));
+  } else {
+    strlcpy(insightTitle, "ROOM IS COMFORTABLE", sizeof(insightTitle));
+    strlcpy(insightAction, "Temp and humidity are in range", sizeof(insightAction));
   }
-  if (!isnan(envPress) && !isnan(pressHourAgo)) {
-    float dP = envPress - pressHourAgo;
-    if (dP <= -1.5f) addInsightOnce("Pressure dropping - skies may sulk soon!");
-    else if (dP >= 1.5f) addInsightOnce("Pressure rising - sunny vibes ahead!");
-  }
-#if ENABLE_WEATHER
-  WeatherSnapshot weather = getWeatherSnapshot();
-  if (wifiOn && weather.ok) {
-    for (int i = 0; i < 3; i++) {
-      if (weather.forecast[i].dayName[0] == '\0') continue;
-      if (strcmp(weather.forecast[i].iconType, "Rain") == 0 || strcmp(weather.forecast[i].iconType, "Drizzle") == 0 || strcmp(weather.forecast[i].iconType, "Thunderstorm") == 0) {
-        snprintf(buf, sizeof(buf), "%s looks rainy - umbrella buddy!", weather.forecast[i].dayName);
-        addInsightOnce(buf);
-        break;
-      }
-    }
-    if (weather.forecast[0].dayName[0] != '\0') {
-      if (weather.forecast[0].temp >= 35) { snprintf(buf, sizeof(buf), "Tomorrow %dC - keep cool, sip water!", weather.forecast[0].temp); addInsightOnce(buf); }
-      else if (weather.forecast[0].temp <= 15) { snprintf(buf, sizeof(buf), "Tomorrow %dC - jacket weather!", weather.forecast[0].temp); addInsightOnce(buf); }
-      else { snprintf(buf, sizeof(buf), "Tomorrow ~%dC - nice for a walk!", weather.forecast[0].temp); addInsightOnce(buf); }
-    }
-  }
-#endif
-  if (micRms > micNoiseFloor * 4.0f) addInsightOnce("Loud room! Pal covers ears... shhh!");
-  if (insightCount == 0) addInsightOnce("All stable. Pal is happy at your desk!");
 }
 void runInference() {
   unsigned long t0 = micros();
@@ -1158,6 +1125,9 @@ void emitDashboardTelemetry() {
   Serial.print(",\"batt\":"); if (isnan(batteryPct)) Serial.print("null"); else Serial.print(batteryPct, 0);
   Serial.print(",\"micMute\":"); Serial.print(micMuted ? "true" : "false");
   Serial.print(",\"micRms\":"); Serial.print(micRms, 0);
+  Serial.print(",\"timerMinutes\":"); Serial.print(timerDurationSec / 60UL);
+  Serial.print(",\"timerRemainingSec\":"); Serial.print(timerRemainingSec);
+  Serial.print(",\"timerRunning\":"); Serial.print(timerRunning ? "true" : "false");
   Serial.print(",\"anomaly\":"); Serial.print(anomalyActive ? "true" : "false");
   Serial.print(",\"climate\":"); Serial.print(climateZone);
   Serial.print(",\"histT\":[");
@@ -1237,6 +1207,48 @@ void clearTimerAlarm() {
   digitalWrite(BUZZER_PIN, LOW);
   buzzQueueIdx = -1;
   buzzQueueLen = 0;
+}
+
+bool setTimerMinutes(int minutes) {
+  if (minutes < 1 || minutes > 120) return false;
+  timerRunning = false;
+  timerLock = false;
+  isTimerAlarm = false;
+  timerDurationSec = (unsigned long)minutes * 60UL;
+  timerRemainingSec = timerDurationSec;
+  digitalWrite(BUZZER_PIN, LOW);
+  buzzQueueIdx = -1;
+  buzzQueueLen = 0;
+  lastInteraction = millis();
+  return true;
+}
+
+void processSerialCommands() {
+  static char line[128];
+  static size_t used = 0;
+  while (Serial.available() > 0) {
+    char ch = (char)Serial.read();
+    if (ch == '\r') continue;
+    if (ch != '\n') {
+      if (used + 1 < sizeof(line)) line[used++] = ch;
+      else used = 0;
+      continue;
+    }
+    line[used] = '\0'; used = 0;
+    StaticJsonDocument<128> command;
+    if (deserializeJson(command, line)) continue;
+    const char* name = command["cmd"] | "";
+    if (strcmp(name, "setTimer") == 0) {
+      int minutes = command["minutes"] | 0;
+      if (setTimerMinutes(minutes)) {
+        Serial.print("{\"type\":\"decision\",\"msg\":\"Timer set to ");
+        Serial.print(minutes); Serial.println(" minutes\"}");
+      } else Serial.println("{\"type\":\"decision\",\"msg\":\"Timer must be 1 to 120 minutes\"}");
+    } else if (strcmp(name, "setMic") == 0 && command["enabled"].is<bool>()) {
+      micMuted = !command["enabled"].as<bool>();
+      Serial.println(micMuted ? "{\"type\":\"decision\",\"msg\":\"Mic muted\"}" : "{\"type\":\"decision\",\"msg\":\"Mic level monitor enabled\"}");
+    }
+  }
 }
 
 void handleButtonNav() {
@@ -1384,8 +1396,8 @@ bool tokenMatches(const String& candidate) {
 
 void addApiCorsHeaders() {
   configServer.sendHeader("Access-Control-Allow-Origin", "*");
-  configServer.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  configServer.sendHeader("Access-Control-Allow-Headers", "X-DeskPal-Token");
+  configServer.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  configServer.sendHeader("Access-Control-Allow-Headers", "X-DeskPal-Token, Content-Type");
   configServer.sendHeader("Cache-Control", "no-store");
 }
 
@@ -1412,6 +1424,9 @@ void sendTelemetryApi() {
   body += ",\"batt\":"; body += isnan(batteryPct) ? "null" : String(batteryPct, 0);
   body += ",\"micMute\":"; body += micMuted ? "true" : "false";
   body += ",\"micRms\":"; body += String(micRms, 0);
+  body += ",\"timerMinutes\":"; body += timerDurationSec / 60UL;
+  body += ",\"timerRemainingSec\":"; body += timerRemainingSec;
+  body += ",\"timerRunning\":"; body += timerRunning ? "true" : "false";
   body += ",\"anomaly\":"; body += anomalyActive ? "true" : "false";
   body += ",\"climate\":"; body += climateZone; body += ",\"histT\":[";
   int n = histFilled ? 60 : histIdx;
@@ -1423,6 +1438,21 @@ void sendTelemetryApi() {
   body += "]}";
   addApiCorsHeaders();
   configServer.send(200, "application/json", body);
+}
+
+void handleTimerApi() {
+  if (!tokenMatches(configServer.header("X-DeskPal-Token"))) {
+    addApiCorsHeaders(); configServer.send(401, "application/json", "{\"error\":\"valid device token required\"}"); return;
+  }
+  StaticJsonDocument<128> command;
+  DeserializationError err = deserializeJson(command, configServer.arg("plain"));
+  int minutes = err ? 0 : (command["minutes"] | 0);
+  if (!setTimerMinutes(minutes)) {
+    addApiCorsHeaders(); configServer.send(400, "application/json", "{\"error\":\"minutes must be from 1 to 120\"}"); return;
+  }
+  addApiCorsHeaders();
+  String response = "{\"ok\":true,\"timerMinutes\":" + String(minutes) + "}";
+  configServer.send(200, "application/json", response);
 }
 
 void handleCorsOptions() {
@@ -1517,6 +1547,7 @@ void getWeatherAndForecast() {
       next.temperature = doc["main"]["temp"].as<float>();
       next.feelsLike = doc["main"]["feels_like"].as<float>();
       next.humidity = doc["main"]["humidity"].as<int>();
+      next.timezoneOffset = doc["timezone"] | 0L;
       const char* main = doc["weather"][0]["main"];
       const char* desc = doc["weather"][0]["description"];
       if (main && desc) {
@@ -1539,6 +1570,7 @@ void getWeatherAndForecast() {
     publishWeatherSnapshot(next);
     return;
   }
+  for (int i = 0; i < 3; ++i) next.forecast[i] = {};
   buildOwmUrl(urlBuf, sizeof(urlBuf), "forecast", cityQ, owmUseCountry);
   if (!http.begin(urlBuf, OPENWEATHER_ROOT_CA)) {
     next.forecastHttp = HTTPC_ERROR_CONNECTION_REFUSED;
@@ -1547,21 +1579,42 @@ void getWeatherAndForecast() {
   httpCode = http.GET();
   next.forecastHttp = httpCode;
   if (httpCode == HTTP_CODE_OK) {
-    DynamicJsonDocument fdoc(2048);
-    DeserializationError err = deserializeJson(fdoc, http.getStream());
+    StaticJsonDocument<192> filter;
+    filter["city"]["timezone"] = true;
+    filter["list"][0]["dt"] = true;
+    filter["list"][0]["main"]["temp"] = true;
+    filter["list"][0]["weather"][0]["main"] = true;
+    DynamicJsonDocument fdoc(6144);
+    DeserializationError err = deserializeJson(fdoc, http.getStream(), DeserializationOption::Filter(filter));
     if (!err) {
-      struct tm tmNow; currentTm(&tmNow);
       const char* days[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-      const int indices[3] = { 8, 16, 24 };
+      time_t utcNow; time(&utcNow);
+      time_t todayEpoch = utcNow + next.timezoneOffset;
+      struct tm todayLocal;
+      gmtime_r(&todayEpoch, &todayLocal);
+      int todayKey = (todayLocal.tm_year + 1900) * 10000 + (todayLocal.tm_mon + 1) * 100 + todayLocal.tm_mday;
+      int dayKeys[3] = { 0, 0, 0 }, dayWeekdays[3] = { 0, 0, 0 };
+      int bestDistance[3] = { 2147483647, 2147483647, 2147483647 };
       JsonArray list = fdoc["list"].as<JsonArray>();
-      for (int i = 0; i < 3; ++i) {
-        if ((size_t)indices[i] >= list.size()) continue;
-        JsonObject item = list[indices[i]];
-        if (!item["main"]["temp"].is<float>()) continue;
-        next.forecast[i].temp = (int)item["main"]["temp"].as<float>();
+      for (JsonObject item : list) {
+        if (!item["dt"].is<long>() || !item["main"]["temp"].is<float>()) continue;
+        time_t localEpoch = (time_t)item["dt"].as<long>() + next.timezoneOffset;
+        struct tm localForecast;
+        gmtime_r(&localEpoch, &localForecast);
+        int dayKey = (localForecast.tm_year + 1900) * 10000 + (localForecast.tm_mon + 1) * 100 + localForecast.tm_mday;
+        if (dayKey == todayKey) continue;
+        int slot = -1;
+        for (int i = 0; i < 3; ++i) if (dayKeys[i] == dayKey) { slot = i; break; }
+        if (slot < 0) for (int i = 0; i < 3; ++i) if (dayKeys[i] == 0) { slot = i; dayKeys[i] = dayKey; dayWeekdays[i] = localForecast.tm_wday; break; }
+        if (slot < 0) continue;
+        int localSeconds = localForecast.tm_hour * 3600 + localForecast.tm_min * 60 + localForecast.tm_sec;
+        int distance = abs(localSeconds - 43200); // use the forecast nearest to local noon
+        if (distance >= bestDistance[slot]) continue;
+        bestDistance[slot] = distance;
+        next.forecast[slot].temp = (int)lroundf(item["main"]["temp"].as<float>());
         const char* icon = item["weather"][0]["main"];
-        if (icon) strlcpy(next.forecast[i].iconType, icon, sizeof(next.forecast[i].iconType));
-        strlcpy(next.forecast[i].dayName, days[(tmNow.tm_wday + i + 1) % 7], sizeof(next.forecast[i].dayName));
+        if (icon) strlcpy(next.forecast[slot].iconType, icon, sizeof(next.forecast[slot].iconType));
+        strlcpy(next.forecast[slot].dayName, days[dayWeekdays[slot]], sizeof(next.forecast[slot].dayName));
       }
     }
   }
@@ -1577,6 +1630,8 @@ void wifiTick(unsigned long now) {
       configServer.collectHeaders(headerNames, 1);
       configServer.on("/api/telemetry", HTTP_GET, sendTelemetryApi);
       configServer.on("/api/telemetry", HTTP_OPTIONS, handleCorsOptions);
+      configServer.on("/api/timer", HTTP_POST, handleTimerApi);
+      configServer.on("/api/timer", HTTP_OPTIONS, handleCorsOptions);
       configServer.onNotFound([]() {
         configServer.sendHeader("Access-Control-Allow-Origin", "*");
         configServer.send(404, "application/json", "{\"error\":\"not found\"}");
@@ -1798,7 +1853,6 @@ void drawEmoPage() {
   }
   if (anomalyActive) drawWarnIcon(0, 0);
   if (quietMode) { display.setFont(NULL); display.setCursor(120, 0); display.print("M"); }
-  if (micMuted) { display.setFont(NULL); display.setCursor(108, 0); display.print("X"); }
   drawEmooEye(leftEye, true, currentMood); drawEmooEye(rightEye, false, currentMood);
 }
 void drawClock() {
@@ -1818,38 +1872,20 @@ void drawClock() {
   drawBatteryIcon(94, 1);
 }
 void drawEnvPage() {
-  drawHeader("ENVIRONMENT"); display.setFont(NULL); display.setTextColor(OLED_WHITE);
+  drawHeader("ROOM"); display.setFont(NULL); display.setTextColor(OLED_WHITE);
   if (!sensorsOk) {
     drawFitLine(sensorFailCount > 0 && sensorFailCount < SENSOR_RECOVERY_FAILS ? "Sensor recovering..." : "No sensor data", 29);
     drawFitLine("Check BME280 wiring", 42);
     return;
   }
   char line[32];
-  snprintf(line, sizeof(line), "Room: %.1f C  RH:%d%%", envTemp, (int)envHum); drawFitLine(line, 21);
-#if ENABLE_WEATHER
-  WeatherSnapshot weather = getWeatherSnapshot();
-  if (wifiOn && weather.ok) {
-    snprintf(line, sizeof(line), "Outside: %.1f C", weather.temperature); drawFitLine(line, 31);
-    snprintf(line, sizeof(line), "Room vs out: %+.1f C", envTemp - weather.temperature); drawFitLine(line, 41);
-  } else {
-    drawFitLine("Outside: not available", 31);
-    snprintf(line, sizeof(line), "Pressure: %dhPa", (int)envPress); drawFitLine(line, 41);
-  }
-#else
-  snprintf(line, sizeof(line), "Pressure: %dhPa", (int)envPress); drawFitLine(line, 31);
-  snprintf(line, sizeof(line), "Altitude: %dm", (int)envAlt); drawFitLine(line, 41);
-#endif
-  snprintf(line, sizeof(line), "Comfort: %s", comfortNames[comfortClass]); drawFitLine(line, 52);
+  snprintf(line, sizeof(line), "%.1f C", envTemp); drawFitLine(line, 24, 14);
+  snprintf(line, sizeof(line), "Humidity  %d%%", (int)envHum); drawFitLine(line, 42, 18);
 }
 void drawInsightsPage() {
   drawHeader("INSIGHTS");
-  if (insightCount == 0) { display.setFont(NULL); display.setCursor(10, 30); display.print("Thinking..."); return; }
-  int idx = (millis() / 8000) % insightCount;
-  static int shownIdx = -1; static unsigned long typeStart = 0;
-  if (idx != shownIdx) { shownIdx = idx; typeStart = millis(); }
-  drawTypewriterText(insights[idx], 18, 4, typeStart);
-  display.setFont(NULL); display.setCursor(112, 56);
-  char cntBuf[16]; snprintf(cntBuf, sizeof(cntBuf), "%d/%d", idx + 1, insightCount); display.print(cntBuf);
+  drawFitLine(insightTitle, 25, 21);
+  drawFitLine(insightAction, 42, 21);
 }
 void drawKwsPage() {
 #if USE_TFLITE
@@ -1893,11 +1929,11 @@ void drawWeatherCard() {
     if (weather.weatherHttp == 401) snprintf(eb, sizeof(eb), "401 bad API key");
     else if (weather.weatherHttp == 404) snprintf(eb, sizeof(eb), "404 city not found");
     else if (weather.weatherHttp == 429) snprintf(eb, sizeof(eb), "429 call limit");
+    else if (weather.weatherHttp == HTTP_CODE_OK) snprintf(eb, sizeof(eb), "Weather data unreadable");
     else if (weather.weatherHttp != 0) snprintf(eb, sizeof(eb), "HTTP %d failed", weather.weatherHttp);
-    else snprintf(eb, sizeof(eb), "First fetch pending");
+    else snprintf(eb, sizeof(eb), "Waiting for time sync");
     drawFitLine(eb, 36);
-    drawFitLine("Retry in about 60 s", 48);
-    drawFitLine("See USB serial log", 58);
+    drawFitLine("Check WiFi, city, API key", 48);
     return;
   }
   display.drawBitmap(96, 19, getMiniIcon(weather.main), 16, 16, OLED_WHITE);
@@ -1908,30 +1944,30 @@ void drawWeatherCard() {
   drawFitLine(weather.description, 55);
 }
 void drawForecastPage() {
-  drawHeader("3-DAY FORECAST"); display.setTextColor(OLED_WHITE);
+  drawHeader("NEXT 3 DAYS"); display.setTextColor(OLED_WHITE);
   WeatherSnapshot weather = getWeatherSnapshot();
-  if (!wifiOn) { display.setFont(NULL); display.setCursor(20, 30); display.print("No WiFi yet"); return; }
+  if (!wifiOn) { drawFitLine("WiFi not connected", 31); return; }
   if (weather.forecast[0].dayName[0] == '\0') {
     display.setFont(NULL);
     char eb[32];
     if (weather.forecastHttp != 0 && weather.forecastHttp != 200) snprintf(eb, sizeof(eb), "Forecast HTTP %d", weather.forecastHttp);
-    else snprintf(eb, sizeof(eb), "Waiting for forecast");
-    display.setCursor(20, 30); display.print(eb);
-    display.setCursor(20, 42); display.print("Retry in 60 s");
+    else snprintf(eb, sizeof(eb), weather.ok ? "Forecast loading" : "Waiting for weather");
+    drawFitLine(eb, 28);
+    drawFitLine("Check WEATHER page", 42);
     return;
   }
-  display.drawLine(42, 16, 42, 63, OLED_WHITE); display.drawLine(85, 16, 85, 63, OLED_WHITE);
+  display.drawLine(42, 20, 42, 61, OLED_WHITE); display.drawLine(85, 20, 85, 61, OLED_WHITE);
   for (int i = 0; i < 3; i++) {
     int centerX = i * 43 + 21;
     display.setFont(NULL);
     const char* d = weather.forecast[i].dayName;
-    display.setCursor(centerX - (int)(strlen(d) * 3), 20); display.print(d);
-    display.drawBitmap(centerX - 8, 28, getMiniIcon(weather.forecast[i].iconType), 16, 16, OLED_WHITE);
+    display.setCursor(centerX - (int)(strlen(d) * 3), 30); display.print(d);
+    display.drawBitmap(centerX - 8, 34, getMiniIcon(weather.forecast[i].iconType), 16, 16, OLED_WHITE);
     char tBuf[8]; snprintf(tBuf, sizeof(tBuf), "%d C", weather.forecast[i].temp);
     int16_t x1, y1; uint16_t w, h;
     display.setFont(NULL);
     display.getTextBounds(tBuf, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor(centerX - (int)(w / 2), 56); display.print(tBuf);
+    display.setCursor(centerX - (int)(w / 2), 57); display.print(tBuf);
   }
 }
 #endif
@@ -1946,7 +1982,6 @@ void drawWorldClock() {
   char iStr[10], sStr[10]; snprintf(iStr, sizeof(iStr), "%02d:%02d", i_h, i_m); snprintf(sStr, sizeof(sStr), "%02d:%02d", s_h, s_m);
   display.setFont(NULL); display.setCursor(14, 25); display.print("INDIA"); display.setCursor(5, 43); display.print(iStr);
   display.setCursor(75, 25); display.print("SYDNEY"); display.setCursor(68, 43); display.print(sStr);
-  display.setCursor(9, 56); display.print("Button: next page");
 }
 
 void drawTimerPage() {
@@ -2084,7 +2119,6 @@ void updateTimer() {
         timerLock = false;
         isTimerAlarm = true;
         excitedUntil = now + 5000;
-        addInsightOnce("Study session complete! Take a stretch break!");
       }
     }
   }
@@ -2100,6 +2134,7 @@ void serviceWatchdog() {
 
 void loop() {
   serviceWatchdog();
+  processSerialCommands();
   if (inConfigMode) {
 #if ENABLE_WEATHER
     configServer.handleClient();

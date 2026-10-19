@@ -549,13 +549,23 @@
 
 <main>
   <section>
+    <h2>Focus timer</h2>
+    <div class="conn">
+      <label for="timerMinutes">Duration (1–120 minutes)</label>
+      <input id="timerMinutes" type="number" min="1" max="120" step="1" value="25" aria-label="Timer duration in minutes">
+      <button id="btnSetTimer" disabled>Set timer</button>
+      <span id="timerStatus" class="status off">Connect to set the timer</span>
+    </div>
+    <p class="note">Setting a duration resets and pauses the device timer. Start it with the DeskPal button.</p>
+  </section>
+  <section>
     <h2>Live readings</h2>
     <div class="grid">
       <div class="tile"><div class="k">Temperature</div><div class="v" id="vTemp">no link</div></div>
       <div class="tile"><div class="k">Humidity</div><div class="v" id="vHum">no link</div></div>
       <div class="tile"><div class="k">Pressure</div><div class="v" id="vPress">no link</div></div>
       <div class="tile"><div class="k">Mood state</div><div class="v" id="vMood">no link</div></div>
-      <div class="tile"><div class="k">Comfort estimate (fixed MLP)</div><div class="v" id="vComfort">no link</div></div>
+      <div class="tile"><div class="k">Room comfort</div><div class="v" id="vComfort">no link</div></div>
       <div class="tile" id="tileAnom"><div class="k">Adaptive sensor anomaly</div><div class="v" id="vAnom">no link</div></div>
       <div class="tile"><div class="k">Inference EMA</div><div class="v" id="vInf">no link</div></div>
       <div class="tile"><div class="k">Climate zone</div><div class="v" id="vClimate">no link</div></div>
@@ -583,9 +593,7 @@
       <div class="tile"><div class="k">Classification</div><div class="v" id="pClass">no link</div></div>
       <div class="tile"><div class="k">Window</div><div class="v" id="pWindow">no link</div></div>
     </div>
-    <p class="note">Classification uses the same 1.5 hPa threshold as the firmware insight generator
-    (generateInsights), applied over the time this dashboard has been connected. The firmware hourly
-    comparison runs on the device and appears on its Insights page.</p>
+    <p class="note">This is the pressure change since the dashboard connected. Room pressure can shift with weather and moving the device.</p>
   </section>
 
   <section>
@@ -596,8 +604,7 @@
       <div class="tile"><div class="k">Wake word events</div><div class="v" id="vWake">0</div></div>
     </div>
     <div class="bar"><div id="barFill"></div></div>
-    <p class="note">Bar is scaled to the session peak, not to an arbitrary ceiling. RMS and the adaptive noise
-    floor are maintained in readMicRms(). Wake word detection runs in detectHeyPalEnergy().</p>
+    <p class="note">The bar shows microphone sound level. No speech recognition model is installed, so this device does not recognize wake words or spoken timer commands.</p>
   </section>
 
   <section>
@@ -608,81 +615,7 @@
         <tbody></tbody>
       </table>
     </div>
-    <p class="note">Entries come from the decision objects the firmware prints: Mini-AI replies, wake word
-    detections, anomaly alerts, lift events, petting states and mic mute changes.</p>
-  </section>
-
-  <section>
-    <h2>Analysis methods and where they run</h2>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Method</th><th>What it computes</th><th>Firmware location</th><th>Output on this page</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Fixed hand coded MLP, 2 inputs, 4 tanh hidden, 5 outputs</td>
-            <td>Comfort class from temperature and humidity normalized per climate zone</td>
-            <td>mlpComfortClassify(), called by runInference(), which readSensors() calls every 2 s</td>
-            <td>Comfort class tile, mood tile</td>
-          </tr>
-          <tr>
-            <td>Online centroid anomaly detection, running mean and spread, 3-sigma rule</td>
-            <td>Outlier flags on temperature, humidity and pressure</td>
-            <td>updateOnlineAnomalyModel(), called by runInference()</td>
-            <td>Anomaly tile, event log entries starting with Anomaly:</td>
-          </tr>
-          <tr>
-            <td>Exponential moving average smoothing</td>
-            <td>Removes jitter from sensors, inference timing and microphone level</td>
-            <td>readSensors() for t, h, p. runInference() for infMs. readMicRms() for mic level and noise floor</td>
-            <td>All live tiles and the temperature sparkline</td>
-          </tr>
-          <tr>
-            <td>3-sample measurement averaging</td>
-            <td>Rejects single bad BME280 conversions before smoothing</td>
-            <td>Inner 3-read loop inside readSensors()</td>
-            <td>Stable temperature, humidity and pressure tiles</td>
-          </tr>
-          <tr>
-            <td>Energy-based keyword spotting with hysteresis</td>
-            <td>Detects the two-syllable wake word from I2S RMS against an adaptive noise floor</td>
-            <td>detectHeyPalEnergy(), called by processAudio() every loop</td>
-            <td>Wake word counter, event log entry Wake word detected</td>
-          </tr>
-          <tr>
-            <td>Syllable-count command parser</td>
-            <td>Maps 1 energy peak to stop timer and 2 or more peaks to start timer</td>
-            <td>Listening window in detectHeyPalEnergy() plus processVoiceCommand()</td>
-            <td>Event log timer responses</td>
-          </tr>
-          <tr>
-            <td>Context-scoring retrieval, Mini-AI</td>
-            <td>Scores 8 candidate replies on 9 normalized context signals and selects the maximum, with a 0.15 fallback floor</td>
-            <td>triggerMiniAI()</td>
-            <td>Event log entries starting with MiniAI:</td>
-          </tr>
-          <tr>
-            <td>Pressure trend test at 1.5 hPa</td>
-            <td>Falling or rising pressure insight</td>
-            <td>readSensors() stores the hourly reference, generateInsights() compares</td>
-            <td>Pressure trend panel, same threshold over the session window</td>
-          </tr>
-          <tr>
-            <td>Lift detection, 0.10 hPa drop in 2 s</td>
-            <td>Detects pickup and drives the scared mood</td>
-            <td>liftCheck(), polled every 250 ms</td>
-            <td>Event log entry Picked up - scared</td>
-          </tr>
-          <tr>
-            <td>Climate-zone normalization</td>
-            <td>Supplies per-zone midpoints and spans for the comfort math</td>
-            <td>getClimateParams(), used by mlpComfortClassify() and isRelativelyCold()</td>
-            <td>Climate zone tile</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <p class="note">Entries are sent by the device when an action or status change occurs.</p>
   </section>
 </main>
 
@@ -706,6 +639,9 @@
     peakRms: 0,
     wakeCount: 0,
     wifiTimer: null,
+    wifiBase: '',
+    wifiToken: '',
+    timerMinutes: null,
     db: null,
     persistCount: 0
   };
@@ -887,6 +823,12 @@
     set('vClimate', CLIMATE_NAMES[t.climate] || ('zone ' + t.climate));
     set('vBatt', t.batt === null ? 'not installed' : t.batt + ' %');
     set('vMute', t.micReady === false ? 'not detected' : (t.micMute ? 'muted' : 'open'));
+    if (Number.isFinite(Number(t.timerMinutes))) {
+      state.timerMinutes = Number(t.timerMinutes);
+      if (document.activeElement !== el('timerMinutes')) el('timerMinutes').value = state.timerMinutes;
+      set('timerStatus', 'Device timer: ' + state.timerMinutes + ' min' + (t.timerRunning ? ' (running)' : ' (paused)'));
+      el('timerStatus').className = 'status on';
+    }
     set('vSensorState', t.sensorsOk === false ? 'offline' : (Number(t.sensorAgeMs) > 10000 ? 'stale' : 'ready'));
     set('vModelState', t.modelReady ? 'ready' : 'not installed');
 
@@ -923,11 +865,13 @@
       s.className = 'status on';
       el('btnConnect').disabled = true;
       el('btnDisconnect').disabled = false;
+      el('btnSetTimer').disabled = false;
     } else {
       s.textContent = 'not connected';
       s.className = 'status off';
       el('btnConnect').disabled = false;
       el('btnDisconnect').disabled = true;
+      el('btnSetTimer').disabled = true;
     }
   }
 
@@ -1003,6 +947,7 @@
     state.port = null;
     state.reader = null;
     state.connected = false;
+    state.wifiBase = ''; state.wifiToken = '';
     updateConnUI();
     resetTiles();
     logRow(timeStr(), 'System', 'dashboard disconnected');
@@ -1020,6 +965,7 @@
       if (!data || data.type !== 'telemetry') throw new Error('invalid device response');
       await disconnect();
       state.connected = true; state.connectTime = Date.now(); state.pSamples = []; state.peakRms = 0;
+      state.wifiBase = base; state.wifiToken = token;
       handleLine(JSON.stringify(data));
       state.wifiTimer = setInterval(async function () {
         try {
@@ -1035,6 +981,40 @@
       updateConnUI();
     } catch (e) {
       el('connStatus').textContent = 'Wi-Fi connect failed: ' + e.message; el('connStatus').className = 'status off';
+    }
+  }
+
+  async function setTimerFromDashboard() {
+    var minutes = Number(el('timerMinutes').value);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 120) {
+      set('timerStatus', 'Choose a whole number from 1 to 120.');
+      el('timerStatus').className = 'status off';
+      return;
+    }
+    if (!state.connected) { set('timerStatus', 'Connect to DeskPal first.'); return; }
+    set('timerStatus', 'Sending timer duration…');
+    try {
+      if (state.wifiTimer) {
+        var response = await fetch(state.wifiBase + '/api/timer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-DeskPal-Token': state.wifiToken },
+          body: JSON.stringify({ minutes: minutes })
+        });
+        var result = await response.json();
+        if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
+        state.timerMinutes = result.timerMinutes;
+        set('timerStatus', 'Timer set to ' + state.timerMinutes + ' min; now paused.');
+      } else {
+        var writer = state.port.writable.getWriter();
+        try {
+          await writer.write(new TextEncoder().encode(JSON.stringify({ cmd: 'setTimer', minutes: minutes }) + '\n'));
+        } finally { writer.releaseLock(); }
+        set('timerStatus', 'Sent. Waiting for DeskPal…');
+      }
+      el('timerStatus').className = 'status on';
+    } catch (e) {
+      set('timerStatus', 'Could not set timer: ' + e.message);
+      el('timerStatus').className = 'status off';
     }
   }
 
@@ -1170,6 +1150,7 @@
   el('btnExport').addEventListener('click', exportHistory);
   el('btnClearHistory').addEventListener('click', clearHistory);
   el('btnDisconnect').addEventListener('click', disconnect);
+  el('btnSetTimer').addEventListener('click', setTimerFromDashboard);
 
   updateConnUI();
   resetTiles();
