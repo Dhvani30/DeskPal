@@ -1,213 +1,166 @@
-# DeskPal Perfboard Assembly Guide
+# DeskPal Cube — Beginner Assembly Guide
 
-**Board:** 7 × 9 cm dotted perfboard (28 × 36 holes @ 2.54 mm pitch)
-**MCU:** ESP32 DevKit 30-pin (USB overhanging bottom edge)
-**Target:** Self-contained IoT desk assistant (OLED + BME280 + INMP441 + buzzer + touch/button/switch)
+This build has **six separate enclosure faces** and **one flat perfboard inside**. The perfboard does not fold into the cube. Each face folder shows that face as a flat 2D dotted placement plan, then adds its parts and wires step by step. The overview folder shows how the faces surround the internal perfboard shelf and how their wires connect.
 
----
+> **Important:** The dots in the five wall-face folders are a planning grid, not five extra perfboards. Use your actual enclosure material for the walls. Your single physical perfboard is the internal shelf shown in `face_bottom/`.
 
-## Zoning Rationale
+## Start with the face folders
 
-| Zone | Location (holes) | Components | Reasoning |
-|------|------------------|------------|-----------|
-| **Display North** | Top edge, rows 1–8 | OLED, BME280 | Readable angle, I2C bundled short |
-| **Acoustic East-West split** | Mic top-left (cols 1–5, rows 1–6); Buzzer bottom-right (cols 24–28, rows 30–36) | INMP441, Buzzer | Diagonal separation > 100 mm kills acoustic feedback |
-| **Compute Core** | Center, rows 14–30 | ESP32 DevKit | Shortest average trace to all peripherals |
-| **Human Interface South** | Bottom edge, rows 32–36 | Touch, Button, Switch | Thumb reach, away from I2S |
-| **Power Spine** | Left (3V3) and right (GND) verticals | Rails + passives | Single-run rails, no loops |
+Each face folder contains five images. Open them in number order. Earlier parts fade gray; the current addition is highlighted.
 
-**Key physical rules**
-- Mic and buzzer on **opposite diagonals** — never share a GND return segment.
-- I2S lines (purple) run along the **top-left edge**; I2C (yellow) runs along the **top-center**. They never parallel for more than 15 mm.
-- 10 kΩ pullups sit at the **OLED cluster**, not at the ESP32, so I2C sees one termination.
-- 100 nF ceramic within 5 mm of ESP32 3V3 pin; 10 µF bulk at OLED/BME280 junction.
-- Touch (GPIO32) trace kept < 25 mm and off any I2S or clock line.
+| Folder | What it represents | Sequence |
+|---|---|---|
+| Front | OLED screen and its four-wire connection | [Step 1](face_front/step_01.svg) · [2](face_front/step_02.svg) · [3](face_front/step_03.svg) · [4](face_front/step_04.svg) · [5](face_front/step_05.svg) |
+| Back | TP4056 charging board and separate USB-C access for the ESP32 | [Step 1](face_back/step_01.svg) · [2](face_back/step_02.svg) · [3](face_back/step_03.svg) · [4](face_back/step_04.svg) · [5](face_back/step_05.svg) |
+| Top | TTP223 touch board, red tactile button, and SPDT quiet-mode switch | [Step 1](face_top/step_01.svg) · [2](face_top/step_02.svg) · [3](face_top/step_03.svg) · [4](face_top/step_04.svg) · [5](face_top/step_05.svg) |
+| Bottom | The one internal perfboard shelf, ESP32 sockets, power parts, and buzzer | [Step 1](face_bottom/step_01.svg) · [2](face_bottom/step_02.svg) · [3](face_bottom/step_03.svg) · [4](face_bottom/step_04.svg) · [5](face_bottom/step_05.svg) |
+| Left | Round INMP441 microphone breakout and sound opening | [Step 1](face_left/step_01.svg) · [2](face_left/step_02.svg) · [3](face_left/step_03.svg) · [4](face_left/step_04.svg) · [5](face_left/step_05.svg) |
+| Right | BME280 module and ventilation openings | [Step 1](face_right/step_01.svg) · [2](face_right/step_02.svg) · [3](face_right/step_03.svg) · [4](face_right/step_04.svg) · [5](face_right/step_05.svg) |
 
----
+See the [3D assembly overview](overview/cube_assembly.svg), [visual wiring map](overview/wiring_map.svg), and [face-to-face wiring notes](overview/README.md).
 
-## Step 1 — Prepare the Board & Silkscreen
+## What sits on each face
 
-**Side:** Top
-**Reference:** `![Step 1](step_01.svg)`
+- **Front:** The OLED is fixed behind a front-wall window, with its screen facing out.
+- **Back:** The TP4056 USB-C socket gets its own opening. The ESP32 DevKit has a second USB-C socket, so it needs a separate opening. The charger board and ESP32 are mounted inside; do not solder their USB sockets to a wall.
+- **Top:** The TTP223 touch area, red tactile pushbutton, and slide switch are separate controls. In this DeskPal firmware, the slide switch selects quiet mode; it is not the battery power switch.
+- **Bottom:** Feet and standoffs hold the single perfboard shelf above the bottom wall. The ESP32, charger, buzzer, and wiring sit on or around this shelf. The LiPo is secured beside it, protected from sharp solder legs.
+- **Left:** The round INMP441 sound port faces outward. Keep the active buzzer inside and away from the mic.
+- **Right:** The BME280 is exposed to room air through vents. Do not cover its sensor with glue or tape.
 
-1. Lay the perfboard with the **copper side up** for reference. Mark rows/columns 1–28 (X) and 1–36 (Y) on masking tape.
-2. Transfer the zoning map: draw a pencil box around the ESP32 footprint (cols 8–21, rows 14–30) and small corner dots for every module.
-3. Mark Pin 1 of each header with a red sharpie dot at the top-left corner of each footprint box.
+The six faces need a box frame, corner posts, screws, or another enclosure method. Perfboard solder joints do not hold the cube walls together. Make a cardboard mock-up first; the drawings are not exact cutting templates because your exact OLED, module, and enclosure dimensions are unknown.
 
-**Verification:** Count 28 dots across and 36 down. Every module's Pin 1 red dot is visible.
+## Parts and extra items
 
----
+Your pictured parts are the classic 30-pin ESP32 DevKit with USB-C, OLED, TP4056 Type-C charging/protection module, 3.7 V 500 mAh LiPo, TTP223 touch module, SPDT slide switch, BME280 breakout, round INMP441 mic breakout, red tactile pushbutton, active buzzer, and one 2.54 mm dotted perfboard.
 
-## Step 2 — Solder the 10 kΩ I2C Pullups
+You will also need a soldering iron with stand, electronics solder, small wire cutters, wire strippers, multimeter, insulated hookup wire, female socket strips for the ESP32, and enclosure hardware. A regulated battery supply is also required. The firmware currently expects a 128×64 SH1106 OLED; check the label or product listing for your screen, because an SSD1306 screen needs the matching firmware setting. If the buzzer draws more current than an ESP32 GPIO can safely provide, add a transistor driver and base resistor. The exact buzzer rating is not visible in the supplied photo, so read its label/specification before wiring.
 
-**Side:** Bottom
-**Reference:** `![Step 2](step_02.svg)`
+## Soldering safety and tools
 
-1. Locate the passive cluster at cols 24–28, rows 14–20.
-2. Insert resistor R1 between the SDA feed hole (col 24, row 15) and the 3V3 spine hole (col 24, row 14). Bend legs flat on the copper side.
-3. Insert R2 between the SCL feed hole (col 26, row 15) and 3V3 (col 26, row 14). Solder and trim.
-4. Bridge the two 3V3-side legs together with a short solder bead so both pullups share one 3V3 tap.
+1. Work with ventilation that moves fumes away from your face. Do not breathe solder smoke.
+2. Wear eye protection. Keep the iron in its stand whenever it is not in your hand. The metal tip stays hot after unplugging.
+3. Hold the iron like a pencil. Keep fingers behind the hot tip. Tie back long hair and keep paper, drinks, and the LiPo away from the iron.
+4. If using a sponge, wet it and squeeze it so it is damp, not dripping. Briefly wipe the iron tip; do not press the sponge against it. Brass wool is another tip cleaner.
+5. Solder is hot. Let each joint cool before touching it. Wash your hands after soldering, especially if using leaded solder.
+6. Disconnect the battery before soldering or changing wires. Never solder directly to the LiPo pouch or cell tabs. Stop using a swollen, punctured, hot, or damaged cell.
 
-**Verification:** DMM resistance SDA↔3V3 ≈ 10 kΩ; SCL↔3V3 ≈ 10 kΩ; SDA↔SCL open (>1 MΩ).
+Useful plain-English terms:
 
----
+- A **pad** is the small metal ring around a perfboard hole or a flat metal spot on a module where a wire is soldered.
+- **GND** is the shared electrical return connection, often called ground.
+- **Continuity** is an unbroken electrical path. A multimeter often beeps when it finds one.
+- **Tinning** means adding a tiny coat of solder to a wire end or iron tip to help solder flow. Do not melt solder directly on the iron and call that a joint; heat the wire and pad together.
 
-## Step 3 — Solder the Decoupling Capacitors
+## Wiring map for this DeskPal firmware
 
-**Side:** Bottom
-**Reference:** `![Step 3](step_03.svg)`
+These pin assignments are taken from `DeskPal/DeskPalConfig.h` for the classic ESP32 profile. The module's printed pin labels still take priority. GPIO35 is input-only, which is suitable for mic data. GPIO34 is reserved in the firmware for optional battery measurement; that feature is disabled. **Never connect a battery directly to any ESP32 GPIO.** See the [Espressif ESP32 datasheet](https://documentation.espressif.com/esp32_datasheet_en.html).
 
-1. **C1 (100 nF):** Insert directly under the ESP32 3V3 pin (col 8, row 15). One leg to 3V3 spine, other to the nearest GND hole (col 9, row 15).
-2. **C2 (10 µF):** Insert at cols 26–27, rows 18–19, between the OLED/BME 3V3 feed and GND. Observe polarity (stripe = −, to GND).
-3. Solder both on the bottom side; keep C1 body flat against the board.
+| Module pin | Connect to | Plain-English job |
+|---|---|---|
+| OLED SDA | ESP32 GPIO21 | I2C data wire |
+| OLED SCL | ESP32 GPIO22 | I2C clock wire |
+| OLED GND | ESP32 GND | Shared return |
+| OLED VCC | Regulated 3.3 V if the exact OLED board allows it | Module power; verify its pin labels and voltage |
+| BME280 SDA / SCL | GPIO21 / GPIO22 | Shares the OLED I2C wires: SDA-to-SDA and SCL-to-SCL |
+| BME280 GND | ESP32 GND | Shared return |
+| BME280 VIN/VCC | 3.3 V only if the breakout accepts it | Do not assume a “5 V” board label means its signal pins are safe at 5 V |
+| INMP441 SCK | GPIO18 | Audio clock |
+| INMP441 WS | GPIO19 | Audio left/right frame clock |
+| INMP441 SD | GPIO35 | Digital audio data into the ESP32 |
+| INMP441 VDD / GND | 3.3 V / GND | The mic is a 3.3 V part; do not feed it 5 V |
+| INMP441 L/R | GND if the breakout uses this for left-channel selection | Check the breakout label |
+| TTP223 OUT | GPIO32 | Touch signal into the ESP32 |
+| TTP223 VCC / GND | 3.3 V / GND, if module label agrees | Touch-board power |
+| Tactile pushbutton | GPIO25 and GND | This is the firmware's mic-mute button; firmware uses `INPUT_PULLUP` |
+| SPDT switch | Common pin to GPIO26; one outer pin to GND | Quiet-mode input; leave the other outer pin open |
+| Active buzzer | GPIO27 through a driver if required | Check its `+` mark, rated voltage, and current first |
 
-**Verification:** DMM 3V3↔GND reads **> 1 kΩ** (no dead short). Capacitor stripe (C2) faces the GND spine.
+The OLED and BME280 share the two I2C wires. Many breakout boards already contain pull-up resistors (small parts that hold signal lines at a high voltage); do not add extra resistors unless the module documentation says they are needed. The INMP441 pin names above match the common breakout labels; verify your board before soldering. See the [INMP441 datasheet](https://product.tdk.com/system/files/dam/doc/product/sw_piezo/mic/mems-mic/data_sheet/inmp441.pdf).
 
----
+## How wires travel between the faces
 
-## Step 4 — Install ESP32 Female Headers
+1. Mount each module on its own enclosure face using screws, a small bracket, or a suitable adhesive.
+2. Make a small, smooth opening near that module's pins. Use an edge grommet or tape if the enclosure edge is sharp.
+3. Solder a flexible insulated wire to each module pin or its header. Label both ends with tape (for example, `MIC SCK`).
+4. Feed the wires through the opening toward the cube interior. Leave a relaxed loop so the face can open for repair.
+5. On the internal shelf, solder each wire end to the matching labeled ESP32 socket pin, supply row, or shared signal row.
+6. Keep every wire insulated. Bare wires must not touch each other or the battery pouch.
 
-**Side:** Top (headers), soldered from bottom
-**Reference:** `![Step 4](step_04.svg)`
+The overview uses red for regulated 3.3 V, black for GND, blue for I2C, yellow for mic audio, green for touch/button signals, and purple for the quiet-mode switch signal. These colors are drawing helpers; always follow the wire labels and module pin names.
 
-1. Place two 15-pin female headers into cols 8 and 21, spanning rows 15–29 (or per your DevKit's pin length).
-2. Tack the four corner pins from the **bottom side** first. Flip board and check the headers sit square against the board.
-3. Solder all 30 pins. Use a helping-hand clamp to keep headers vertical.
-4. **Do not insert the ESP32 yet.**
+## Soldering a wire to perfboard: tiny steps
 
-**Verification:** No continuity between any two adjacent header pins. Headers are perpendicular to the board (check with a square edge).
+Practice on spare wire and a spare hole before working on the DeskPal.
 
----
+1. With the battery unplugged, strip about 3 mm of insulation from the wire.
+2. Twist loose copper strands together with your fingers so none stick out sideways.
+3. Push the bare end through a perfboard hole. Bend it slightly underneath so it stays in place when you turn the board over.
+4. Hold the iron like a pencil. Touch its tip to both the copper wire and the metal ring around the hole for about one second.
+5. Touch solder to the hot wire-and-ring joint, not to the iron tip. Let a small amount flow around both pieces.
+6. Pull the solder away, then lift the iron. Keep the board still while the joint cools.
+7. After it cools, gently tug the wire. Trim any long bare wire with cutters, with the cut end pointed away from your eyes.
+8. Look for a small smooth joint. If solder touches a neighboring ring, do not power the board; remove the extra solder and inspect again.
 
-## Step 5 — Install Peripheral Headers
+**Checkpoint:** A good joint holds the wire without movement and does not touch the neighboring hole. If you are unsure, ask someone experienced to inspect it before adding power.
 
-**Side:** Top (headers), soldered from bottom
-**Reference:** `![Step 5](step_05.svg)`
+## Build order across all six folders
 
-1. **OLED** — 4-pin header at cols 8–11, row 2 (GND, VCC, SCL, SDA order per your module).
-2. **BME280** — 4-pin header at cols 20–23, row 5.
-3. **INMP441** — 6-pin header at cols 1–3, rows 3–5 (VDD, GND, L/R, WS, SCK, SD).
-4. **Buzzer** — 2-pin header at cols 25–26, row 33.
-5. **Touch / Button / Switch** — 2-pin headers at cols 4–6, 9–11, 14–16, row 34.
+### A. Plan and dry-fit
 
-**Verification:** Every header's Pin 1 aligns with the red sharpie dot. No pin shorts to neighbors.
+1. Open each face's `step_01.svg` and mark which physical wall it represents.
+2. Place your actual modules on a cardboard mock-up. Measure the OLED window, both USB-C ports, switch slot, mic sound hole, and BME280 vents from the parts themselves.
+3. Put the real perfboard inside as a horizontal shelf. Check that the ESP32, charger, regulator, buzzer, wires, and LiPo all fit without pressing against the walls.
+4. Keep the ESP32 antenna near a plastic wall and away from the battery and metal.
 
----
+**Checkpoint:** The mock-up closes without pinching wires or squeezing the battery. No enclosure holes have been cut in final material yet.
 
-## Step 6 — Route the 3.3V Spine (Red)
+### B. Assemble the face modules
 
-**Side:** Bottom
-**Reference:** `![Step 6](step_06.svg)`
+1. Work through `face_front/step_01.svg` to `step_05.svg` for the OLED.
+2. Work through `face_top/step_01.svg` to `step_05.svg` for the touch module, pushbutton, and switch.
+3. Work through `face_left/step_01.svg` to `step_05.svg` for the microphone. Keep its sound port open.
+4. Work through `face_right/step_01.svg` to `step_05.svg` for the BME280. Leave the air vents open.
+5. Work through `face_back/step_01.svg` to `step_05.svg` for the charger opening and separate ESP32 USB-C opening.
+6. Work through `face_bottom/step_01.svg` to `step_05.svg` for the internal perfboard shelf.
+7. Label every wire at both ends before it enters the cube.
 
-1. Tin a solid-core 22 AWG wire (or heavy solder bridge) along col 5 from row 14 down to row 33.
-2. Branch east at row 14 to the ESP32 3V3 pin (col 8), to the passive cluster (col 24), and to the BME280 header.
-3. Branch east at row 33 to the buzzer (col 25) and the OLED 3V3 (col 9, row 2 — run the branch up the left side).
-4. Solder-drop every joint with a 2 mm blob.
+**Checkpoint:** Every module is held securely, the two USB-C ports have separate openings, and face wires reach the internal shelf without being stretched.
 
-**Verification:** Continuity from col 5/row 14 → ESP32 3V3 → OLED 3V3 → BME 3V3 → buzzer + < 1 Ω each.
+### C. Connect the internal shelf
 
----
+1. Solder female socket strips to the perfboard so the ESP32 can be removed. Use the ESP32 to line up the two rows, tack the end pins first, check alignment, then solder the remaining pins.
+2. Connect one black GND wire from an ESP32 GND pin to a ground row. Connect the module GND wires to that same row.
+3. Connect ESP32 3V3 to a separate red supply row. Only connect modules verified for 3.3 V there.
+4. Connect OLED and BME280 SDA together to GPIO21. Connect their SCL wires together to GPIO22. Do not swap the two signals.
+5. Connect the mic wires to GPIO18 (SCK), GPIO19 (WS), and GPIO35 (SD), then connect its supply and ground.
+6. Connect TTP223 OUT to GPIO32. Connect the tactile button between GPIO25 and GND.
+7. Connect the SPDT common leg to GPIO26 and one outer leg to GND. Leave its other outer leg open. This switch selects quiet mode in the firmware; it does not switch battery power.
+8. Connect the buzzer to GPIO27 only if its current is safe for that pin. Otherwise use a suitable NPN transistor driver and base resistor. The buzzer part rating is unknown from the photo, so do not guess.
 
-## Step 7 — Route the GND Spine (Black)
+**Checkpoint:** With USB and battery disconnected, use a multimeter to check each connection end-to-end. Confirm GND points connect, SDA reaches SDA, SCL reaches SCL, and no signal is shorted to 3.3 V or GND.
 
-**Side:** Bottom
-**Reference:** `![Step 7](step_07.svg)`
+### D. Battery, charger, and enclosure
 
-1. Tin a solid-core wire along col 24 from row 2 down to row 33.
-2. Branch west at row 2 to OLED GND (col 8, row 2).
-3. Branch west at row 15 to ESP32 GND (col 21), C1's ground leg, and the mic GND (col 3, row 4 — route along top edge).
-4. Branch at row 33 to buzzer −, and to switch/button/touch GND stubs.
+1. Identify the charger pads by their printed labels: `B+`, `B−`, and, if provided, `OUT+`, `OUT−`.
+2. The LiPo positive wire goes to `B+`; negative goes to `B−`. Do not connect the battery until polarity is confirmed with the meter.
+3. Use the protected `OUT` pads for the load only if your charger board has them and its instructions say to do so.
+4. Add a 3.3 V regulator or suitable converter between the battery/load output and the ESP32 supply. TP4056 is a charger, not a voltage regulator. **Never connect raw LiPo voltage directly to ESP32 3V3 or 5V.**
+5. Check the charger current setting against the battery maker's limit. 500 mAh is capacity, not a charging-current specification. If the cell maker permits 1C, 500 mAh corresponds to 500 mA; use a lower setting if required. The TP4056 current-setting resistor is described in its [datasheet](https://www.toppwr.com/uploadfile/file/20240307/65e993d6379ea.pdf).
+6. A basic TP4056 does not provide a safe run-while-charging power path. The SPDT is already used for quiet mode, so add a separate load disconnect or unplug the load while charging.
+7. Attach standoffs to the bottom wall, then attach the perfboard shelf above it. Secure the LiPo beside the shelf with a soft strap or tape, away from sharp solder legs and screw points.
+8. Join the six enclosure faces with a frame, posts, or screws. Keep the back or top removable for service.
 
-**Verification:** Continuity GND → every module GND pin < 1 Ω. **3V3 to GND reads > 1 kΩ** (no short).
+**Checkpoint:** Battery polarity, charger current, regulator output, and load-disconnect method are checked before the LiPo is connected.
 
----
+## First power-up checklist
 
-## Step 8 — Route the I2C Bus (Yellow)
+- [ ] Inspect for loose wire strands and solder bridges between neighboring holes.
+- [ ] Battery disconnected: check that 3.3 V is not shorted to GND. A steady near-zero resistance means stop and find the short.
+- [ ] Verify module labels at both ends of every wire. Do not trust color alone.
+- [ ] Power the ESP32 from USB by itself first. Do not connect USB and battery power together unless the exact DevKit supports it.
+- [ ] Add one module at a time, turning power off before changing wires.
+- [ ] Connect the LiPo only after the regulator and charge-current setting are confirmed.
+- [ ] Turn the load off/disconnect it during charging. Stop if the LiPo becomes hot, swollen, or damaged.
 
-**Side:** Bottom
-**Reference:** `![Step 8](step_08.svg)`
-
-1. **SDA (GPIO21):** From ESP32 pin (col 10, row 15) run north along col 10 to row 6, then east to the OLED (col 11, row 2) and BME280 (col 20, row 5).
-2. **SCL (GPIO22):** From ESP32 pin (col 11, row 15) run parallel 2.54 mm east, to OLED SCL and BME280 SCL.
-3. The two lines must stay parallel and 2.54 mm apart the whole run; cross power rails at 90° only.
-
-**Verification:** SDA–SCL > 1 MΩ; each line < 5 Ω end-to-end; pullups confirmed on both.
-
----
-
-## Step 9 — Route the I2S Bus (Purple)
-
-**Side:** Bottom
-**Reference:** `![Step 9](step_09.svg)`
-
-1. **SCK (GPIO18)** from ESP32 pin col 9, row 15 → up col 9 to row 8 → west to mic col 3, row 3.
-2. **WS (GPIO19)** from col 10, row 15 → up col 10 to row 7 → west to mic col 2, row 3.
-3. **SD (GPIO35)** from col 12, row 15 → up col 12 to row 6 → west, crossing under the WS line, to mic col 1, row 3.
-4. Space lines ≥ 2.54 mm apart; no I2S line runs parallel to the 3V3 spine for more than 15 mm.
-
-**Verification:** Each I2S pin < 5 Ω to mic pad; no short to 3V3 or GND; lines visually do not parallel the red rail.
-
----
-
-## Step 10 — Route the Buzzer & Front Controls
-
-**Side:** Bottom
-**Reference:** `![Step 10](step_10.svg)`
-
-1. **Buzzer (GPIO27):** From ESP32 pin col 20, row 15, run south along col 20 to row 33, east to buzzer + at col 25.
-2. **Touch (GPIO32):** From ESP32 pin col 13, row 29, short stub south to touch header at col 5, row 34.
-3. **Button (GPIO25):** From col 14, row 29 to button at col 10, row 34.
-4. **Switch (GPIO26):** From col 15, row 29 to switch at col 15, row 34.
-5. If using bare switches, add 10 kΩ pullups to 3V3 on each control line, placed near the header.
-
-**Verification:** Continuity each GPIO to its header pin; momentary continuity when button/switch/touch is pressed.
-
----
-
-## Step 11 — Insert the ESP32 & Modules
-
-**Side:** Top
-**Reference:** `![Step 11](step_11.svg)`
-
-1. **Insert the ESP32 last.** Align pins, press gently, confirm USB overhangs the bottom edge.
-2. Insert OLED (top edge, upright), BME280 (top-right), mic (top-left, port facing outward), buzzer (bottom-right), and the three front controls.
-3. Do **not** power on yet.
-
-**Verification:** All modules seated fully, no bent pins, no metal contacts touching the 3V3 spine.
-
----
-
-## Step 12 — Final Continuity & Insulation Check
-
-**Side:** Both
-**Reference:** `![Step 12](step_12.svg)`
-
-1. Continuity check every rail and bus with DMM in beep mode.
-2. Check that **no component metal shell or leg** touches the 3V3 or GND spine except at its designated joint.
-3. Add hot glue or kapton tape over any exposed wire crossing another wire.
-4. Confirm the USB connector is clear of the board edge (≥ 3 mm).
-
-**Verification:** All Step 6–10 checks still pass; no continuity between 3V3 and GND (>1 kΩ); no bridge between SDA and SCL.
-
----
-
-## Pre-Power-On Checklist
-
-- [ ] **3V3 ↔ GND > 1 kΩ** (no dead short).
-- [ ] **Polarity**: C2 (10 µF) stripe faces GND; mic L/R pin configured for left channel; buzzer + to GPIO27.
-- [ ] **Pin 1 alignment** on all headers matches the silkscreen dots; ESP32 USB faces outward.
-- [ ] **Visual scan**: no solder bridges between adjacent ESP32 header pins; no I2S wire touching the 3V3 spine.
-
-If all four pass → plug in USB, watch for the OLED to illuminate, then flash firmware.
-
----
-
-## Common Mistakes
-
-1. **Pullups at the wrong end** — placed at ESP32 instead of OLED cluster → longer I2C stubs and ringing. Fix: move to cols 24–28.
-2. **I2S parallel to 3V3** — causes buzzer noise to couple into the mic. Fix: re-route purple lines along the top edge, cross red rail at 90° only.
-3. **Buzzer on the same GND return as mic** — injects switching transients. Fix: separate GND branches meeting only at ESP32 GND.
-4. **Forgot C1 decoupling** — ESP32 brownouts during Wi-Fi TX. Fix: 100 nF within 5 mm of 3V3 pin, mandatory.
-5. **Touch trace next to I2S** — false touches. Fix: keep GPIO32 stub < 25 mm and ≥ 5 mm from any purple line.
-6. **ESP32 USB not overhanging** — cable cannot plug in. Fix: shift DevKit down so USB body extends beyond board edge.
-7. **Solder bridge between 3V3 and GND spines** — instant dead short. Fix: visual + DMM check after every rail.
+The face diagrams are 2D layouts; the [overview diagram](overview/cube_assembly.svg) explains how their separate walls meet around the internal shelf. Their dotted grids are not cutting templates. Measure your actual components before cutting the cube.
