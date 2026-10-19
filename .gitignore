@@ -1,0 +1,19 @@
+# Arduino/ESP32 build output and firmware binaries
+DeskPal/.build/
+DeskPal/.pio/
+*.elf
+*.bin
+*.hex
+*.map
+*.o
+*.d
+
+# VS Code local cache (keep shared project settings and tasks)
+.vscode/ipch/
+.vscode/.browse.VC.db*
+
+# Windows and editor temporary files
+Thumbs.db
+Desktop.ini
+*.swp
+*.tmp
