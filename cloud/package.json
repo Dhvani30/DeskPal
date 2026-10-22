@@ -1,0 +1,13 @@
+{
+  "name": "deskpal-cloud-memory",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "mongodb": "^6.17.0"
+  }
+}

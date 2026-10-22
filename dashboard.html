@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DeskPal Telemetry Dashboard</title>
+<script src="https://unpkg.com/mqtt@5/dist/mqtt.min.js"></script>
 <style>
   :root {
     /* Pink Neumorphism Color Palette */
@@ -125,10 +126,10 @@
   }
 
   .deskpal-screen-bezel {
-    background: var(--panel);
+    background: #070a10;
     border-radius: 14px;
-    box-shadow: inset 3px 3px 7px var(--shadow-dark), inset -3px -3px 7px var(--shadow-light);
-    border: 1px solid var(--border-subtle);
+    box-shadow: inset 0 0 14px #000, 0 0 16px rgba(45, 230, 224, .18);
+    border: 1px solid #24323b;
     padding: 8px 12px;
     display: flex;
     align-items: center;
@@ -146,7 +147,7 @@
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.8px;
-    color: var(--ink-sub);
+    color: #48d9d4;
     margin-top: 8px;
     display: flex;
     align-items: center;
@@ -158,8 +159,8 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 6px rgba(236, 72, 153, 0.8);
+    background: #34e4df;
+    box-shadow: 0 0 7px rgba(52, 228, 223, 0.9);
     animation: pulse 2s infinite;
   }
 
@@ -200,6 +201,19 @@
     color: var(--ink);
     font: inherit;
   }
+  .conn select {
+    min-width: 190px; max-width: 320px; padding: 10px 12px;
+    border: 1px solid var(--border-subtle); border-radius: 10px;
+    background: var(--panel); color: var(--ink); font: inherit;
+  }
+  .setup-card {
+    margin-top: 18px; padding: 14px 16px; border: 1px solid var(--border-dark);
+    border-radius: 14px; background: rgba(255,255,255,.28);
+  }
+  .wifi-steps { margin: 10px 0 14px; padding-left: 22px; color: var(--ink-sub); }
+  .wifi-steps li { margin: 6px 0; }
+  .setup-card summary { font-weight: 700; cursor: pointer; }
+  .setup-card[open] summary { margin-bottom: 8px; }
   
   button {
     font-family: inherit;
@@ -226,18 +240,18 @@
     transform: translateY(0.5px);
   }
   
-  button#btnConnect {
+  button#btnWifi {
     background: var(--accent-gradient);
     color: #ffffff;
     border: none;
     box-shadow: var(--neu-subtle), var(--accent-glow);
     text-shadow: 0 1px 2px rgba(0,0,0,0.15);
   }
-  button#btnConnect:hover:not(:disabled) {
+  button#btnWifi:hover:not(:disabled) {
     box-shadow: var(--neu-card), 0 6px 20px rgba(236, 72, 153, 0.5);
     transform: translateY(-1.5px);
   }
-  button#btnConnect:active:not(:disabled) {
+  button#btnWifi:active:not(:disabled) {
     box-shadow: inset 2px 2px 6px rgba(0,0,0,0.3);
     transform: translateY(0.5px);
   }
@@ -368,6 +382,29 @@
   }
   .tile.bad .k { color: #be123c; }
   .tile.bad .v { color: var(--bad); }
+  #liveReadings.is-stale .tile { opacity: .42; }
+  .analysis-grid, .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .analysis-wide { grid-column: 1 / -1; }
+  .analysis-meter { height: 10px; margin-top: 10px; border-radius: 99px; overflow: hidden; background: rgba(120,80,100,.16); }
+  .analysis-meter > div { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, #f59e0b, #14b8a6); transition: width .3s ease; }
+  .risk-badge { display: inline-block; padding: 4px 9px; border-radius: 99px; background: rgba(120,80,100,.12); font-size: 13px; }
+  .risk-badge[data-risk="HIGH"] { color: #be123c; background: rgba(244,63,94,.14); }
+  .risk-badge[data-risk="MEDIUM"] { color: #b45309; background: rgba(245,158,11,.16); }
+  .risk-badge[data-risk="LOW"] { color: #047857; background: rgba(16,185,129,.14); }
+  .comfort-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .comfort-actions button { min-width: 118px; }
+  .comfort-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 18px; }
+  .comfort-band-track { position: relative; height: 24px; margin: 18px 8px 8px; border-radius: 99px; background: rgba(120,80,100,.16); box-shadow: var(--neu-pressed-subtle); }
+  .comfort-band { position: absolute; top: 5px; height: 14px; min-width: 2px; border-radius: 99px; }
+  .comfort-band.default { background: rgba(139,92,246,.45); border: 1px solid #7c3aed; }
+  .comfort-band.learned { top: 8px; height: 8px; background: rgba(236,72,153,.8); }
+  .comfort-marker { position: absolute; top: -5px; width: 3px; height: 34px; background: var(--ink); border-radius: 3px; transform: translateX(-50%); }
+  .comfort-band-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--ink-sub); font-size: 12px; }
+  .comfort-legend-chip { display: inline-block; width: 14px; height: 8px; margin-right: 5px; border-radius: 8px; vertical-align: middle; }
+  .comfort-legend-chip.default { background: rgba(139,92,246,.55); border: 1px solid #7c3aed; }
+  .comfort-legend-chip.learned { background: rgba(236,72,153,.8); }
+  .comfort-confidence { height: 9px; margin-top: 8px; border-radius: 99px; overflow: hidden; background: rgba(120,80,100,.16); }
+  .comfort-confidence > div { height: 100%; width: 0; background: var(--accent-gradient); transition: width .25s ease; }
   
   .note { 
     font-size: 12.5px; 
@@ -386,6 +423,13 @@
     box-shadow: var(--neu-pressed);
     border: 1px solid var(--border-subtle);
   }
+  .chart-grid { display: grid; grid-template-columns: 1fr; gap: 22px; }
+  .chart-grid h3, section > h3 { margin: 0 0 10px; color: var(--ink-sub); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .chart-grid canvas { height: 160px; }
+  #chartMic { height: 130px; }
+  .statline { display: flex; justify-content: space-between; gap: 12px; padding: 9px 4px 0; color: var(--ink-sub); font: 12px ui-monospace, Consolas, monospace; }
+  .statline b { color: var(--ink); }
+  #faceMood { max-width: 220px; }
 
   .bar { 
     height: 12px; 
@@ -517,6 +561,7 @@
     .tile .v {
       font-size: 16px;
     }
+    .statline { font-size: 10px; }
   }
 </style>
 </head>
@@ -526,28 +571,89 @@
   <div class="header-inner">
     <div class="header-info">
       <h1>DeskPal Telemetry Dashboard</h1>
-      <p class="sub">Live sensor data from DeskPal over USB serial or local Wi-Fi. Readings and events are kept in this browser's IndexedDB database.</p>
+      <p class="sub">Connect to DeskPal over Wi-Fi to view live sensor data. Readings and events are kept in this browser's IndexedDB database.</p>
       <div class="conn">
-        <button id="btnConnect">Connect to device</button>
-        <input id="deviceUrl" aria-label="Device URL" value="http://deskpal.local" placeholder="http://device-ip">
-        <input id="deviceToken" type="password" aria-label="Device API token" placeholder="device token from Serial Monitor">
-        <button id="btnWifi">Connect over Wi-Fi</button>
-        <button id="btnDisconnect" disabled>Disconnect</button>
-        <button id="btnExport">Export local history</button>
-        <button id="btnClearHistory">Clear history</button>
+        <button id="btnWifi">Connect to DeskPal</button>
         <span id="connStatus" class="status off">not connected</span>
       </div>
+      <details class="setup-card">
+        <summary>Wi-Fi settings and help</summary>
+        <p class="note">Direct connection: hold the touch pad while powering DeskPal on, join the <code>DeskPal-xxxx</code> Wi-Fi shown on its OLED, and use <code>http://192.168.4.1</code> with the token shown on the setup page. Your computer may say this network has no internet; that is expected. To use your router instead, enter <code>http://deskpal.local</code> or DeskPal’s router IP.</p>
+        <div class="conn">
+          <label for="deviceUrl">DeskPal address</label>
+          <input id="deviceUrl" aria-label="Device URL" value="http://deskpal.local" placeholder="http://device-ip">
+          <label for="deviceToken">Device token</label>
+          <input id="deviceToken" type="password" aria-label="Device API token" placeholder="Copy from DeskPal setup page">
+        </div>
+        <ol class="wifi-steps">
+          <li>Choose <strong>Connect to DeskPal</strong> above to start the live Wi-Fi link.</li>
+          <li>While connected directly to DeskPal, change router Wi-Fi details on <code>http://192.168.4.1</code>. The dashboard’s scan button is for router-connected mode.</li>
+          <li>Choose <strong>Save and restart DeskPal</strong>. Wait for it to reconnect, then update its address above if needed.</li>
+        </ol>
+        <div class="conn">
+          <label for="wifiNetwork">New network name</label>
+          <input id="wifiNetwork" list="wifiNetworks" autocomplete="off" placeholder="Scan or type the network name" aria-label="New Wi-Fi network name">
+          <datalist id="wifiNetworks"></datalist>
+          <button id="btnScanWifi" type="button">Scan Wi-Fi</button>
+          <label for="wifiPassword">New network password</label>
+          <input id="wifiPassword" type="password" autocomplete="new-password" aria-label="New Wi-Fi password">
+          <button id="btnSaveWifi" type="button" disabled>Save and restart DeskPal</button>
+          <span id="wifiStatus" class="status off">Connect to DeskPal over Wi-Fi to change its network.</span>
+        </div>
+        <p class="note"><strong>If DeskPal is not reachable:</strong> re-enter direct mode by holding the touch pad while powering on, then join the setup network shown on the OLED.</p>
+      </details>
     </div>
     <div class="deskpal-face-container" id="deskpalFaceBox" title="Click to make DeskPal blink!">
       <div class="deskpal-screen-bezel">
         <canvas id="deskpalEyes" width="124" height="64"></canvas>
       </div>
-      <div class="deskpal-face-label">DeskPal Screen</div>
+      <div class="deskpal-face-label"><span id="faceMood">Waiting for DeskPal mood</span></div>
     </div>
   </div>
 </header>
 
 <main>
+  <section>
+    <h2>Easy connect (no IP address needed)</h2>
+    <div class="conn">
+      <label for="pairCode">Pairing code</label>
+      <input id="pairCode" maxlength="8" autocomplete="off" placeholder="e.g. K7M2QX9P" aria-label="DeskPal pairing code" style="text-transform:uppercase">
+      <button id="btnPair" type="button">Connect</button>
+      <span id="pairStatus" class="status off">Not connected</span>
+    </div>
+    <p class="note">Find the pairing code on DeskPal’s setup page: hold the touch pad while powering on, then open <code>192.168.4.1</code>. The code is also printed in the Serial Monitor. Works from any network once DeskPal is on Wi-Fi. This link is read-only; use the direct Wi-Fi connection below to change settings.</p>
+  </section>
+
+  <section>
+    <h2>Optional cloud memory and decisions</h2>
+    <p class="note">Optional: connect a MongoDB Atlas database through the DeskPal cloud service to save sensor history and get room-trend suggestions. No microphone audio is sent. <a href="cloud/README.md" target="_blank" rel="noopener">Open the MongoDB setup steps</a>.</p>
+    <div class="conn">
+      <label for="cloudUrl">Cloud service URL</label>
+      <input id="cloudUrl" type="url" placeholder="https://your-service.example" aria-label="Cloud service URL">
+      <label for="cloudDeviceId">Device name in cloud</label>
+      <input id="cloudDeviceId" value="deskpal-01" maxlength="48" aria-label="Cloud device name">
+      <label for="cloudToken">Cloud access token</label>
+      <input id="cloudToken" type="password" autocomplete="off" aria-label="Cloud access token">
+      <button id="btnCloudConnect" type="button">Connect cloud memory</button>
+      <button id="btnCloudDisconnect" type="button">Turn off cloud memory</button>
+      <span id="cloudStatus" class="status off">Cloud memory is off. DeskPal works without MongoDB.</span>
+    </div>
+    <div id="cloudDecisionBox" class="tile" aria-live="polite">
+      <div class="k">History-based suggestions</div>
+      <div class="v" id="cloudDecisions">Connect a configured cloud service to collect a baseline.</div>
+    </div>
+    <div class="tile" style="margin-top:14px" aria-live="polite">
+      <div class="k">Last 24 hours</div>
+      <div class="summary-grid">
+        <div><div class="k">Temperature min / avg / max</div><div class="v" id="summaryTemp">unavailable</div></div>
+        <div><div class="k">Humidity min / avg / max</div><div class="v" id="summaryHumidity">unavailable</div></div>
+        <div><div class="k">Samples with comfort score ≥ 70</div><div class="v" id="summaryComfort">unavailable</div></div>
+        <div><div class="k">Hottest / coolest hour</div><div class="v" id="summaryHours">unavailable</div></div>
+        <div><div class="k">Inferred events</div><div class="v" id="summaryEvents">unavailable</div></div>
+      </div>
+    </div>
+  </section>
+
   <section>
     <h2>Focus timer</h2>
     <div class="conn">
@@ -558,10 +664,11 @@
     </div>
     <p class="note">Setting a duration resets and pauses the device timer. Start it with the DeskPal button.</p>
   </section>
-  <section>
+  <section id="liveReadings">
     <h2>Live readings</h2>
     <div class="grid">
       <div class="tile"><div class="k">Temperature</div><div class="v" id="vTemp">no link</div></div>
+      <div class="tile"><div class="k">Raw BME temperature</div><div class="v" id="vRawTemp">no link</div></div>
       <div class="tile"><div class="k">Humidity</div><div class="v" id="vHum">no link</div></div>
       <div class="tile"><div class="k">Pressure</div><div class="v" id="vPress">no link</div></div>
       <div class="tile"><div class="k">Mood state</div><div class="v" id="vMood">no link</div></div>
@@ -577,11 +684,81 @@
     <p class="note">Unavailable readings are reported as null. Battery shows “not installed” when battery sensing is disabled. History is stored locally in this browser profile and can be exported or cleared.</p>
   </section>
 
+  <section id="roomAnalysis">
+    <h2>Room analysis</h2>
+    <p class="note">Trend, comfort, and room-event readings are device estimates. Missing fields are unavailable on older firmware.</p>
+    <div class="analysis-grid">
+      <div class="tile"><div class="k">Comfort score estimate</div><div class="v" id="analysisComfort">unavailable</div><div class="analysis-meter" role="meter" aria-label="Estimated room comfort" aria-valuemin="0" aria-valuemax="100"><div id="analysisComfortBar"></div></div></div>
+      <div class="tile"><div class="k">Dew point estimate</div><div class="v" id="analysisDew">unavailable</div></div>
+      <div class="tile"><div class="k">Heat index estimate</div><div class="v" id="analysisHeat">unavailable</div></div>
+      <div class="tile"><div class="k">Mold / condensation risk estimate</div><div class="v"><span class="risk-badge" id="analysisRisk">unavailable</span></div></div>
+      <div class="tile"><div class="k">Temperature trend estimate</div><div class="v" id="analysisTempTrend">unavailable</div></div>
+      <div class="tile"><div class="k">Humidity trend estimate</div><div class="v" id="analysisHumTrend">unavailable</div></div>
+      <div class="tile"><div class="k">Pressure trend estimate</div><div class="v" id="analysisPressTrend">unavailable</div></div>
+      <div class="tile"><div class="k">Pressure forecast estimate</div><div class="v" id="analysisForecast">unavailable</div></div>
+      <div class="tile"><div class="k">Temperature prediction estimate</div><div class="v" id="analysisPrediction">unavailable</div></div>
+      <div class="tile analysis-wide"><div class="k">Latest inferred event</div><div class="v" id="analysisInferred">unavailable</div></div>
+    </div>
+  </section>
+
+  <section id="personalComfort">
+    <h2>Personal comfort</h2>
+    <p class="note">DeskPal adjusts small temperature and humidity range estimates from your feedback. More votes can improve the estimate.</p>
+    <div class="comfort-actions" aria-label="Temperature comfort feedback">
+      <button type="button" id="comfortTempCold" disabled>Too cold</button>
+      <button type="button" id="comfortTempPerfect" disabled>Perfect</button>
+      <button type="button" id="comfortTempHot" disabled>Too warm</button>
+    </div>
+    <div class="comfort-actions" aria-label="Humidity comfort feedback">
+      <button type="button" id="comfortHumDry" disabled>Too dry</button>
+      <button type="button" id="comfortHumWet" disabled>Too humid</button>
+      <button type="button" id="comfortUndo" disabled>Undo last vote</button>
+      <button type="button" id="comfortReset" disabled>Reset learning</button>
+    </div>
+    <span id="comfortStatus" class="status off" aria-live="polite">Connect to DeskPal to rate comfort.</span>
+    <div class="comfort-summary">
+      <div class="tile">
+        <div class="k">Temperature range estimate</div>
+        <div class="v" id="comfortTempRange">unavailable on this firmware</div>
+        <div class="comfort-band-track" id="comfortBandTrack" role="img" aria-label="Temperature comfort range unavailable">
+          <span class="comfort-band default" id="comfortDefaultBand"></span>
+          <span class="comfort-band learned" id="comfortLearnedBand"></span>
+          <span class="comfort-marker" id="comfortCurrentMarker"></span>
+        </div>
+        <div class="comfort-band-legend"><span><i class="comfort-legend-chip default"></i>Default range</span><span><i class="comfort-legend-chip learned"></i>Learned range</span><span>Marker: current</span></div>
+      </div>
+      <div class="tile">
+        <div class="k">Humidity range estimate</div>
+        <div class="v" id="comfortHumRange">unavailable on this firmware</div>
+        <div class="k" style="margin-top:16px">Feedback votes</div>
+        <div class="v" id="comfortVoteCount">unavailable</div>
+        <div class="comfort-confidence" role="meter" aria-label="Comfort model confidence" aria-valuemin="0" aria-valuemax="100"><div id="comfortConfidenceBar"></div></div>
+        <div class="note" id="comfortConfidenceText">Confidence unavailable</div>
+      </div>
+    </div>
+    <p class="note" id="comfortEstimateNote">This feature needs newer DeskPal firmware.</p>
+  </section>
+
   <section>
-    <h2>Temperature history, device buffer, 60 samples</h2>
-    <canvas id="spark" width="1040" height="180"></canvas>
-    <p class="note">Plotted directly from the histT array inside the telemetry object. The buffer is filled by
-    readSensors() after EMA smoothing, one entry per 2 s sensor cycle.</p>
+    <h2>Room sensor calibration</h2>
+    <div class="conn">
+      <label for="tempOffset">Temperature correction (C)</label>
+      <input id="tempOffset" type="number" min="-10" max="10" step="0.1" value="-1.5">
+      <button id="btnSetTempOffset" disabled>Save correction</button>
+      <span id="calibrationStatus" class="status off">Connect to calibrate</span>
+    </div>
+    <p class="note">Compare the BME280 with a separate room thermometer after both sit in the same airflow for 10–15 minutes. Enter reference minus BME reading. The correction is saved on DeskPal and also affects its mood. Keep the BME280 away from the ESP32 and other warm parts; a software correction cannot remove changing heat from nearby components.</p>
+  </section>
+
+  <section>
+    <h2>Sensor history and session statistics</h2>
+    <div class="conn"><button id="btnExport">Export local history</button><button id="btnClearHistory">Clear local history</button></div>
+    <div class="chart-grid">
+      <div><h3>Temperature (C)</h3><canvas id="chartTemp" width="1040" height="180"></canvas><div class="statline"><span>Min <b id="tempMin">—</b></span><span>Avg <b id="tempAvg">—</b></span><span>Max <b id="tempMax">—</b></span></div></div>
+      <div><h3>Humidity (%)</h3><canvas id="chartHumidity" width="1040" height="180"></canvas><div class="statline"><span>Min <b id="humMin">—</b></span><span>Avg <b id="humAvg">—</b></span><span>Max <b id="humMax">—</b></span></div></div>
+      <div><h3>Pressure (hPa)</h3><canvas id="chartPressure" width="1040" height="180"></canvas><div class="statline"><span>Min <b id="pressMin">—</b></span><span>Avg <b id="pressAvg">—</b></span><span>Max <b id="pressMax">—</b></span></div></div>
+    </div>
+    <p class="note">DeskPal keeps the latest 60 sensor samples (about two minutes at its current sampling interval). The numbers below each graph summarize that window.</p>
   </section>
 
   <section>
@@ -604,11 +781,14 @@
       <div class="tile"><div class="k">Wake word events</div><div class="v" id="vWake">0</div></div>
     </div>
     <div class="bar"><div id="barFill"></div></div>
+    <h3>Microphone level history</h3>
+    <canvas id="chartMic" width="1040" height="140"></canvas>
     <p class="note">The bar shows microphone sound level. No speech recognition model is installed, so this device does not recognize wake words or spoken timer commands.</p>
   </section>
 
   <section>
     <h2>Event log, decision stream</h2>
+    <div class="conn"><span id="eventCount" class="status off">0 events</span><span id="eventSourceNote" class="note">Connect to see live device events.</span></div>
     <div id="eventWrap">
       <table id="events">
         <thead><tr><th>Time</th><th>Source</th><th>Message</th></tr></thead>
@@ -631,20 +811,68 @@
   var CLIMATE_NAMES = ['temperate', 'coastal', 'desert', 'mountain'];
 
   var state = {
-    port: null,
-    reader: null,
     connected: false,
     connectTime: 0,
     pSamples: [],
     peakRms: 0,
+    micSeries: [],
     wakeCount: 0,
     wifiTimer: null,
+    wifiAbortController: null,
+    wifiPollInFlight: false,
+    lastMessageAt: 0,
+    lastSeenAt: Number(sessionStorage.getItem('deskpalLastMessageAt') || 0),
+    lastDeviceUptimeMs: Number(sessionStorage.getItem('deskpalLastDeviceUptimeMs') || 0) || null,
+    lastDeviceEventId: Number(sessionStorage.getItem('deskpalLastDeviceEventId') || 0),
     wifiBase: '',
     wifiToken: '',
+    cloudEnabled: false,
+    cloudBase: '',
+    cloudToken: '',
+    cloudDeviceId: 'deskpal-01',
+    cloudLastAttempt: 0,
+    cloudInFlight: false,
     timerMinutes: null,
+    tempOffsetC: -1.5,
+    comfortInFlight: false,
+    latestComfortReadings: null,
+    lastPage: null,
+    eventTotal: 0,
+    mood: 'NORMAL',
     db: null,
     persistCount: 0
   };
+  var renderMoodEyes = null;
+  var activeTimeouts = new Set();
+  var activeIntervals = new Set();
+  var seenDeviceEvents = new Set();
+  var deviceEventKeys = [];
+  try {
+    deviceEventKeys = JSON.parse(sessionStorage.getItem('deskpalSeenDeviceEvents') || '[]');
+    if (!Array.isArray(deviceEventKeys)) deviceEventKeys = [];
+    deviceEventKeys = deviceEventKeys.filter(function (key) { return typeof key === 'string'; }).slice(-512);
+    deviceEventKeys.forEach(function (key) { seenDeviceEvents.add(key); });
+  } catch (e) { deviceEventKeys = []; }
+
+  function scheduleTimeout(callback, delay) {
+    var id = setTimeout(function () {
+      activeTimeouts.delete(id);
+      callback();
+    }, delay);
+    activeTimeouts.add(id);
+    return id;
+  }
+  function scheduleInterval(callback, delay) {
+    var id = setInterval(callback, delay);
+    activeIntervals.add(id);
+    return id;
+  }
+  function clearTrackedTimers() {
+    activeTimeouts.forEach(clearTimeout);
+    activeIntervals.forEach(clearInterval);
+    activeTimeouts.clear();
+    activeIntervals.clear();
+  }
 
   var dbReady = new Promise(function (resolve) {
     if (!('indexedDB' in window)) return resolve(null);
@@ -694,7 +922,7 @@
     }));
     var blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), samples: result[0], events: result[1] }, null, 2)], { type: 'application/json' });
     var link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = 'deskpal-history.json'; link.click();
-    setTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
+    scheduleTimeout(function () { URL.revokeObjectURL(link.href); }, 1000);
   }
 
   async function clearHistory() {
@@ -704,8 +932,26 @@
     var tx = db.transaction(['samples', 'events'], 'readwrite');
     tx.objectStore('samples').clear(); tx.objectStore('events').clear();
     el('events').tBodies[0].replaceChildren();
-    state.pSamples = []; drawSpark(null);
+    state.pSamples = []; state.micSeries = []; state.eventTotal = 0;
+    drawSpark(null); drawChart('chartHumidity', null, '%', '#0d9488'); drawChart('chartPressure', null, 'hPa', '#8b5cf6'); drawChart('chartMic', null, '', '#f97316');
+    set('eventCount', '0 events');
     logRow(timeStr(), 'System', 'local history cleared');
+  }
+
+  async function restoreEvents() {
+    var db = await dbReady;
+    if (!db) return;
+    var tx = db.transaction('events', 'readonly');
+    var req = tx.objectStore('events').getAll();
+    req.onsuccess = function () {
+      var rows = req.result.slice(-200);
+      rows.forEach(function (entry) {
+        var value = entry.value || {};
+        renderEventRow(value.timeText || (typeof value.time === 'string' ? value.time : new Date(entry.time).toLocaleTimeString()), value.source || 'System', value.message || '');
+      });
+      state.eventTotal = req.result.length;
+      set('eventCount', state.eventTotal + ' saved events');
+    };
   }
 
   function el(id) { return document.getElementById(id); }
@@ -727,69 +973,262 @@
     return 'System';
   }
 
-  function logRow(time, source, msg) {
+  function handleDeviceEvent(event) {
+    if (!event || typeof event.msg !== 'string') return;
+    var id = Number(event.id);
+    var uptimeMs = Number(event.uptimeMs);
+    if (Number.isFinite(id) && id > 0) {
+      var eventKey = id + ':' + (Number.isFinite(uptimeMs) ? uptimeMs : 'unknown');
+      if (seenDeviceEvents.has(eventKey)) return;
+      if (id <= state.lastDeviceEventId) return;
+      seenDeviceEvents.add(eventKey);
+      deviceEventKeys.push(eventKey);
+      if (deviceEventKeys.length > 512) seenDeviceEvents.delete(deviceEventKeys.shift());
+      try {
+        sessionStorage.setItem('deskpalSeenDeviceEvents', JSON.stringify(deviceEventKeys));
+        sessionStorage.setItem('deskpalLastDeviceEventId', String(id));
+      } catch (e) {}
+    }
+    if (Number.isFinite(id) && id > 0) {
+      if (state.lastDeviceEventId && id > state.lastDeviceEventId + 1) {
+        var lost = id - state.lastDeviceEventId - 1;
+        logRow(timeStr(), 'System', lost + ' device event(s) were missed before this update');
+      }
+      state.lastDeviceEventId = Math.max(state.lastDeviceEventId, id);
+    }
+    if (event.msg.indexOf('Wake word') === 0) {
+      state.wakeCount++;
+      set('vWake', String(state.wakeCount));
+    }
+    logRow(timeStr(), event.source || catOf(event.msg), event.msg);
+    sendCloudEvent(event);
+  }
+
+  function cloudRequest(path, options) {
+    options = options || {};
+    options.headers = Object.assign({}, options.headers || {}, { 'X-DeskPal-Cloud-Token': state.cloudToken });
+    return fetch(state.cloudBase + path, options);
+  }
+
+  function setUnavailableSummary() {
+    set('summaryTemp', 'unavailable'); set('summaryHumidity', 'unavailable');
+    set('summaryComfort', 'unavailable'); set('summaryHours', 'unavailable'); set('summaryEvents', 'unavailable');
+  }
+
+  function statTriplet(stats, suffix, digits) {
+    if (!stats || ![stats.min, stats.average, stats.max].every(function (value) { return typeof value === 'number' && Number.isFinite(value); })) return 'unavailable';
+    return stats.min.toFixed(digits) + suffix + ' / ' + stats.average.toFixed(digits) + suffix + ' / ' + stats.max.toFixed(digits) + suffix;
+  }
+
+  function hourLabel(item) {
+    if (!item || typeof item.hour !== 'string') return '—';
+    var date = new Date(item.hour);
+    return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString([], { weekday: 'short', hour: 'numeric' });
+  }
+
+  async function loadCloudSummary() {
+    if (!state.cloudEnabled) return;
+    try {
+      var path = '/api/summary?deviceId=' + encodeURIComponent(state.cloudDeviceId) + '&hours=24';
+      var response = await cloudRequest(path, { cache: 'no-store' });
+      var summary = await response.json();
+      if (!response.ok) throw new Error(summary.error || ('HTTP ' + response.status));
+      set('summaryTemp', statTriplet(summary.temperatureC, ' C', 1));
+      set('summaryHumidity', statTriplet(summary.humidityPct, '%', 1));
+      set('summaryComfort', typeof summary.comfortScore70Percent === 'number' && Number.isFinite(summary.comfortScore70Percent)
+        ? summary.comfortScore70Percent.toFixed(0) + '% of samples' : 'unavailable');
+      set('summaryHours', 'Hot ' + hourLabel(summary.hottestHour) + ' / cool ' + hourLabel(summary.coolestHour));
+      set('summaryEvents', Number.isFinite(Number(summary.inferredEventCount)) ? String(summary.inferredEventCount) : 'unavailable');
+    } catch (error) {
+      setUnavailableSummary();
+    }
+  }
+
+  function showCloudDecisions(data) {
+    var box = el('cloudDecisions');
+    if (data.learning) {
+      box.textContent = 'Collecting history: ' + Number(data.sampleCount || 0) + ' of ' + Number(data.minimumSamples || 20) + ' readings needed before trend suggestions are available.';
+      return;
+    }
+    var decisions = Array.isArray(data.decisions) ? data.decisions : [];
+    box.textContent = decisions.length
+      ? decisions.map(function (item) { return item.message + (item.suggestion ? ' — ' + item.suggestion : ''); }).join('  •  ')
+      : 'No unusual room conditions compared with DeskPal’s recent history.';
+  }
+
+  function cloudStatus(message, active) {
+    set('cloudStatus', message);
+    el('cloudStatus').className = 'status ' + (active ? 'on' : 'off');
+  }
+
+  async function connectCloudMemory() {
+    var base = el('cloudUrl').value.trim().replace(/\/$/, '');
+    var token = el('cloudToken').value.trim();
+    var deviceId = el('cloudDeviceId').value.trim();
+    if (!/^https?:\/\//i.test(base) || !token || !deviceId) {
+      cloudStatus('Enter the cloud URL, access token, and a device name.', false); return;
+    }
+    state.cloudBase = base; state.cloudToken = token; state.cloudDeviceId = deviceId;
+    try {
+      var health = await fetch(base + '/health', { cache: 'no-store' });
+      var info = await health.json();
+      if (!health.ok || !info.mongoReady) throw new Error(info.error || 'MongoDB is not connected on the cloud service yet.');
+      state.cloudEnabled = true; state.cloudLastAttempt = 0;
+      sessionStorage.setItem('deskpalCloudUrl', base);
+      sessionStorage.setItem('deskpalCloudDeviceId', deviceId);
+      sessionStorage.setItem('deskpalCloudToken', token);
+      cloudStatus('Cloud connected. History will be saved while this dashboard is connected to DeskPal.', true);
+      var response = await cloudRequest('/api/decisions/latest?deviceId=' + encodeURIComponent(deviceId), { cache: 'no-store' });
+      var data = await response.json();
+      if (response.ok) showCloudDecisions(data);
+      else throw new Error(data.error || 'Could not load cloud decisions.');
+      await loadCloudSummary();
+    } catch (error) {
+      state.cloudEnabled = false;
+      cloudStatus('Cloud is not ready: ' + error.message, false);
+    }
+  }
+
+  function disconnectCloudMemory() {
+    state.cloudEnabled = false; state.cloudBase = ''; state.cloudToken = ''; state.cloudLastAttempt = 0;
+    sessionStorage.removeItem('deskpalCloudUrl'); sessionStorage.removeItem('deskpalCloudDeviceId'); sessionStorage.removeItem('deskpalCloudToken');
+    cloudStatus('Cloud memory is off. DeskPal continues to work normally.', false);
+    set('cloudDecisions', 'Connect a configured cloud service to collect a baseline.');
+    setUnavailableSummary();
+  }
+
+  async function sendCloudTelemetry(t) {
+    var now = Date.now();
+    if (!state.cloudEnabled || state.cloudInFlight || now - state.cloudLastAttempt < 60000) return;
+    state.cloudLastAttempt = now; state.cloudInFlight = true;
+    var payload = {
+      deviceId: state.cloudDeviceId,
+      observedAt: new Date(now).toISOString(),
+      sensorsOk: t.sensorsOk !== false,
+      temperatureC: t.t,
+      humidityPct: t.h,
+      pressureHpa: t.p,
+      dewPointC: t.dewPointC,
+      heatIndexC: t.heatIndexC,
+      comfortScore: t.comfortScore,
+      moldRisk: t.moldRisk,
+      tempTrendCPerHr: t.tempTrendCPerHr,
+      humTrendPerHr: t.humTrendPerHr,
+      pressTrendHpaPerHr: t.pressTrendHpaPerHr,
+      pressureForecast: t.pressureForecast,
+      temperaturePrediction: t.temperaturePrediction,
+      inferred: t.inferred,
+      mood: t.mood,
+      comfort: t.comfort,
+      anomaly: Boolean(t.anomaly)
+    };
+    try {
+      var response = await cloudRequest('/api/telemetry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      var data = await response.json();
+      if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+      showCloudDecisions(data);
+      await loadCloudSummary();
+      cloudStatus(data.learning ? 'Cloud saved this reading and is learning your room’s normal range.' : 'Cloud history and trend suggestions are up to date.', true);
+    } catch (error) {
+      cloudStatus('Cloud upload paused: ' + error.message, false);
+    } finally { state.cloudInFlight = false; }
+  }
+
+  function sendCloudEvent(event) {
+    if (!state.cloudEnabled || !event || typeof event.msg !== 'string') return;
+    cloudRequest('/api/events', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: state.cloudDeviceId, event: event })
+    }).catch(function () { /* A later sensor upload will show cloud connectivity status. */ });
+  }
+
+  async function sendCloudFeedback(label, kind) {
+    var readings = state.latestComfortReadings;
+    if (!state.cloudEnabled || !readings || !Number.isFinite(readings.temperatureC) ||
+        !Number.isFinite(readings.humidityPct)) return;
+    try {
+      var response = await cloudRequest('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: state.cloudDeviceId,
+          at: new Date().toISOString(),
+          label: label,
+          kind: kind,
+          temperatureC: readings.temperatureC,
+          humidityPct: readings.humidityPct
+        })
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
+    } catch (error) {
+      cloudStatus('Could not save comfort feedback: ' + error.message, false);
+    }
+  }
+
+  async function syncWifiEvents() {
+    if (!state.wifiBase || !state.wifiToken) return;
+    var url = state.wifiBase + '/api/events?after=' + encodeURIComponent(state.lastDeviceEventId);
+    var response = await fetch(url, { cache: 'no-store', headers: { 'X-DeskPal-Token': state.wifiToken }, signal: state.wifiAbortController ? state.wifiAbortController.signal : undefined });
+    if (!response.ok) throw new Error('event API HTTP ' + response.status);
+    var data = await response.json();
+    if (Number(data.dropped) > 0) logRow(timeStr(), 'System', data.dropped + ' older event(s) rolled out of the device queue');
+    (data.events || []).forEach(handleDeviceEvent);
+    if (Number(data.latestId) > state.lastDeviceEventId) {
+      state.lastDeviceEventId = Number(data.latestId);
+      try { sessionStorage.setItem('deskpalLastDeviceEventId', String(state.lastDeviceEventId)); } catch (e) {}
+    }
+  }
+
+  function renderEventRow(time, source, msg) {
     var tbody = el('events').tBodies[0];
     var tr = tbody.insertRow(0);
     tr.insertCell(0).textContent = time;
     tr.insertCell(1).textContent = source;
     tr.insertCell(2).textContent = msg;
     while (tbody.rows.length > 200) tbody.deleteRow(tbody.rows.length - 1);
-    persist('events', { time: time, source: source, message: msg });
   }
 
-  function drawSpark(arr) {
-    var c = el('spark');
-    var ctx = c.getContext('2d');
-    var W = c.width, H = c.height;
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = '#f5e4ea'; 
-    ctx.fillRect(0, 0, W, H);
-    if (!arr || arr.length < 2) {
-      ctx.fillStyle = '#865a6e'; 
-      ctx.font = '13px "JetBrains Mono", Consolas, monospace';
-      ctx.fillText('waiting for device temperature buffer', 16, H / 2);
-      return;
+  function logRow(time, source, msg) {
+    renderEventRow(time, source, msg);
+    persist('events', { time: time, source: source, message: msg });
+    state.eventTotal++;
+    set('eventCount', state.eventTotal + ' saved events');
+  }
+
+  function drawChart(id, arr, unit, color) {
+    var c = el(id), ctx = c.getContext('2d'), W = c.width, H = c.height;
+    ctx.clearRect(0, 0, W, H); ctx.fillStyle = '#f5e4ea'; ctx.fillRect(0, 0, W, H);
+    arr = Array.isArray(arr) ? arr.map(Number).filter(Number.isFinite) : [];
+    var padL = 56, padR = 14, padT = 14, padB = 15;
+    ctx.font = '11px ui-monospace, Consolas, monospace'; ctx.fillStyle = '#865a6e';
+    if (arr.length < 2) { ctx.fillText('waiting for device history', 14, H / 2); return; }
+    var mn = Math.min.apply(null, arr), mx = Math.max.apply(null, arr);
+    if (mx - mn < .2) { var center = (mx + mn) / 2; mn = center - .1; mx = center + .1; }
+    for (var g = 0; g < 4; g++) {
+      var gy = padT + g * (H - padT - padB) / 3;
+      ctx.strokeStyle = '#ecd4de'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(W - padR, gy); ctx.stroke();
+      ctx.fillStyle = '#865a6e'; ctx.fillText((mx - g * (mx - mn) / 3).toFixed(1), 4, gy + 4);
     }
-    var mn = Math.min.apply(null, arr);
-    var mx = Math.max.apply(null, arr);
-    if (mx - mn < 0.5) { var mid = (mx + mn) / 2; mn = mid - 0.25; mx = mid + 0.25; }
-    var padL = 52, padR = 16, padT = 16, padB = 16;
-    
-    // Draw guide lines
-    ctx.strokeStyle = '#ecd4de';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(W - padR, padT); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(padL, H - padB); ctx.lineTo(W - padR, H - padB); ctx.stroke();
-    
-    // Draw labels
-    ctx.fillStyle = '#865a6e'; 
-    ctx.font = '11px "JetBrains Mono", Consolas, monospace';
-    ctx.fillText(mx.toFixed(1) + ' C', 4, padT + 4);
-    ctx.fillText(mn.toFixed(1) + ' C', 4, H - padB + 4);
-    
-    // Draw line with pink glow
-    ctx.strokeStyle = '#ec4899';
-    ctx.lineWidth = 2.5;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.beginPath();
     for (var i = 0; i < arr.length; i++) {
       var x = padL + i * (W - padL - padR) / (arr.length - 1);
       var y = padT + (mx - arr[i]) * (H - padT - padB) / (mx - mn);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
-    
-    // Draw end point indicator
-    var lx = padL + (arr.length - 1) * (W - padL - padR) / (arr.length - 1);
-    var ly = padT + (mx - arr[arr.length - 1]) * (H - padT - padB) / (mx - mn);
-    ctx.fillStyle = '#db2777';
-    ctx.beginPath();
-    ctx.arc(lx, ly, 5, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    var lastY = padT + (mx - arr[arr.length - 1]) * (H - padT - padB) / (mx - mn);
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(W - padR, lastY, 4, 0, 2 * Math.PI); ctx.fill();
+  }
+  function drawSpark(arr) { drawChart('chartTemp', arr, 'C', '#ec4899'); }
+
+  function showStats(prefix, arr, digits) {
+    arr = Array.isArray(arr) ? arr.map(Number).filter(Number.isFinite) : [];
+    if (!arr.length) return;
+    var sum = arr.reduce(function (a, b) { return a + b; }, 0);
+    set(prefix + 'Min', Math.min.apply(null, arr).toFixed(digits));
+    set(prefix + 'Avg', (sum / arr.length).toFixed(digits));
+    set(prefix + 'Max', Math.max.apply(null, arr).toFixed(digits));
   }
 
   function updatePressure(p) {
@@ -809,14 +1248,118 @@
     set('pWindow', mins + ' min');
   }
 
+  function renderRoomAnalysis(t) {
+    function numberText(value, suffix, digits) {
+      return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) + suffix : 'unavailable';
+    }
+    function trendText(value, suffix) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return 'unavailable';
+      var arrow = value > 0.05 ? '↑' : value < -0.05 ? '↓' : '→';
+      return arrow + ' ' + (value > 0 ? '+' : '') + value.toFixed(2) + suffix + '/h';
+    }
+    var score = t.comfortScore;
+    var validScore = typeof score === 'number' && Number.isFinite(score) && score >= 0 && score <= 100;
+    set('analysisComfort', validScore ? Math.round(score) + ' / 100 estimate' : 'unavailable');
+    el('analysisComfortBar').style.width = validScore ? score + '%' : '0%';
+    el('analysisComfortBar').parentElement.setAttribute('aria-valuenow', validScore ? String(Math.round(score)) : '0');
+    set('analysisDew', numberText(t.dewPointC, ' C estimate', 1));
+    set('analysisHeat', numberText(t.heatIndexC, ' C estimate', 1));
+    var risk = typeof t.moldRisk === 'string' && /^(LOW|MEDIUM|HIGH)$/.test(t.moldRisk) ? t.moldRisk : 'unavailable';
+    set('analysisRisk', risk);
+    el('analysisRisk').dataset.risk = risk === 'unavailable' ? '' : risk;
+    set('analysisTempTrend', trendText(t.tempTrendCPerHr, ' C'));
+    set('analysisHumTrend', trendText(t.humTrendPerHr, ' %'));
+    set('analysisPressTrend', trendText(t.pressTrendHpaPerHr, ' hPa'));
+    set('analysisForecast', typeof t.pressureForecast === 'string' && t.pressureForecast ? t.pressureForecast + ' estimate' : 'unavailable');
+    set('analysisPrediction', typeof t.temperaturePrediction === 'string' && t.temperaturePrediction ? t.temperaturePrediction : 'unavailable');
+    set('analysisInferred', typeof t.inferred === 'string' && t.inferred && t.inferred !== 'None' ? t.inferred : (t.inferred === 'None' ? 'None yet' : 'unavailable'));
+  }
+
+  function renderPersonalComfort(t) {
+    function finiteField(name) {
+      return typeof t[name] === 'number' && Number.isFinite(t[name]);
+    }
+    var hasTemp = finiteField('comfortLoT') && finiteField('comfortHiT');
+    var hasDefault = finiteField('defaultLoT') && finiteField('defaultHiT');
+    var hasHum = finiteField('comfortLoH') && finiteField('comfortHiH');
+    var hasVotes = typeof t.comfortVotes === 'number' && Number.isFinite(t.comfortVotes);
+    if (!hasTemp || !hasDefault || !hasHum || !hasVotes) {
+      var unavailable = state.connected ? 'unavailable on this firmware' : 'no link';
+      set('comfortTempRange', unavailable);
+      set('comfortHumRange', unavailable);
+      set('comfortVoteCount', 'unavailable');
+      set('comfortConfidenceText', 'Confidence unavailable');
+      set('comfortEstimateNote', state.connected
+        ? 'Update DeskPal firmware to view personal comfort estimates.'
+        : 'Connect to DeskPal to view comfort estimates.');
+      el('comfortBandTrack').setAttribute('aria-label', 'Temperature comfort range unavailable');
+      el('comfortDefaultBand').style.width = '0%';
+      el('comfortLearnedBand').style.width = '0%';
+      el('comfortCurrentMarker').style.display = 'none';
+      el('comfortConfidenceBar').style.width = '0%';
+      return;
+    }
+
+    var votes = Math.max(0, Math.floor(t.comfortVotes));
+    var votesT = typeof t.comfortVotesT === 'number' && Number.isFinite(t.comfortVotesT)
+      ? Math.max(0, Math.floor(t.comfortVotesT)) : votes;
+    var votesH = typeof t.comfortVotesH === 'number' && Number.isFinite(t.comfortVotesH)
+      ? Math.max(0, Math.floor(t.comfortVotesH)) : votes;
+    var tempPersonal = typeof t.comfortPersonalT === 'boolean' ? t.comfortPersonalT : Boolean(t.comfortPersonal && votesT >= 5);
+    var humPersonal = typeof t.comfortPersonalH === 'boolean' ? t.comfortPersonalH : Boolean(t.comfortPersonal && votesH >= 5);
+    var shownLoT = tempPersonal ? t.comfortLoT : t.defaultLoT;
+    var shownHiT = tempPersonal ? t.comfortHiT : t.defaultHiT;
+    var defaultLoH = finiteField('defaultLoH') ? t.defaultLoH : t.comfortLoH;
+    var defaultHiH = finiteField('defaultHiH') ? t.defaultHiH : t.comfortHiH;
+    var shownLoH = humPersonal ? t.comfortLoH : defaultLoH;
+    var shownHiH = humPersonal ? t.comfortHiH : defaultHiH;
+    set('comfortTempRange', (tempPersonal ? 'Learned estimate ' : 'Default range ') + shownLoT.toFixed(1) + '–' + shownHiT.toFixed(1) + ' C');
+    set('comfortHumRange', (humPersonal ? 'Learned estimate ' : 'Default range ') + shownLoH.toFixed(0) + '–' + shownHiH.toFixed(0) + ' %');
+    set('comfortVoteCount', votes + ' total' + (votes < 5 ? ' (learning)' : ''));
+
+    var confidence = Math.min(1, votes / 20);
+    el('comfortConfidenceBar').style.width = (confidence * 100).toFixed(0) + '%';
+    el('comfortConfidenceBar').parentElement.setAttribute('aria-valuenow', String(Math.round(confidence * 100)));
+    set('comfortConfidenceText', Math.round(confidence * 100) + '% confidence estimate (' + votes + '/20 votes)');
+    set('comfortEstimateNote', 'Personal ranges are estimates; more feedback can improve them.');
+
+    var values = [t.defaultLoT, t.defaultHiT, shownLoT, shownHiT];
+    if (typeof t.t === 'number' && Number.isFinite(t.t)) values.push(t.t);
+    var minValue = Math.min.apply(Math, values), maxValue = Math.max.apply(Math, values);
+    var padding = Math.max(1, (maxValue - minValue) * 0.08);
+    minValue -= padding; maxValue += padding;
+    function position(value) { return Math.max(0, Math.min(100, (value - minValue) / (maxValue - minValue) * 100)); }
+    var defaultLeft = position(t.defaultLoT), defaultRight = position(t.defaultHiT);
+    var learnedLeft = position(shownLoT), learnedRight = position(shownHiT);
+    el('comfortDefaultBand').style.left = defaultLeft + '%';
+    el('comfortDefaultBand').style.width = Math.max(0, defaultRight - defaultLeft) + '%';
+    el('comfortLearnedBand').style.left = learnedLeft + '%';
+    el('comfortLearnedBand').style.width = Math.max(0, learnedRight - learnedLeft) + '%';
+    if (typeof t.t === 'number' && Number.isFinite(t.t)) {
+      el('comfortCurrentMarker').style.display = '';
+      el('comfortCurrentMarker').style.left = position(t.t) + '%';
+      el('comfortBandTrack').setAttribute('aria-label', 'Default temperature range ' + t.defaultLoT.toFixed(1) + ' to ' + t.defaultHiT.toFixed(1) + ' C; ' + (tempPersonal ? 'learned' : 'shown') + ' range ' + shownLoT.toFixed(1) + ' to ' + shownHiT.toFixed(1) + ' C; current reading ' + t.t.toFixed(1) + ' C');
+    } else {
+      el('comfortCurrentMarker').style.display = 'none';
+      el('comfortBandTrack').setAttribute('aria-label', 'Temperature range graphic; current reading unavailable');
+    }
+  }
+
   function applyTelemetry(t) {
     t.t = t.t === null ? null : Number(t.t); t.h = t.h === null ? null : Number(t.h); t.p = t.p === null ? null : Number(t.p);
+    state.latestComfortReadings = { temperatureC: t.t, humidityPct: t.h };
     t.infMs = Number(t.infMs); t.batt = t.batt === null ? null : Number(t.batt); t.micRms = Number(t.micRms);
     set('vTemp', t.t === null ? 'unavailable' : t.t.toFixed(1) + ' C');
+    set('vRawTemp', t.tRaw === null || t.tRaw === undefined ? 'unavailable' : Number(t.tRaw).toFixed(1) + ' C');
     set('vHum', t.h === null ? 'unavailable' : t.h + ' %');
     set('vPress', t.p === null ? 'unavailable' : t.p + ' hPa');
     set('vMood', t.mood);
+    state.mood = String(t.mood || 'NORMAL').toUpperCase();
+    set('faceMood', state.mood + ' • LIVE');
+    if (renderMoodEyes) renderMoodEyes();
     set('vComfort', t.comfort);
+    renderRoomAnalysis(t);
+    renderPersonalComfort(t);
     set('vAnom', t.anomaly ? 'active' : 'clear');
     el('tileAnom').className = 'tile' + (t.anomaly ? ' bad' : '');
     set('vInf', Number.isFinite(t.infMs) ? t.infMs.toFixed(2) + ' ms' : 'unavailable');
@@ -831,6 +1374,10 @@
     }
     set('vSensorState', t.sensorsOk === false ? 'offline' : (Number(t.sensorAgeMs) > 10000 ? 'stale' : 'ready'));
     set('vModelState', t.modelReady ? 'ready' : 'not installed');
+    if (Number.isFinite(Number(t.tempOffsetC))) {
+      state.tempOffsetC = Number(t.tempOffsetC);
+      if (document.activeElement !== el('tempOffset')) el('tempOffset').value = state.tempOffsetC.toFixed(1);
+    }
 
     set('vRms', Math.round(t.micRms));
     if (t.micRms > state.peakRms) state.peakRms = t.micRms;
@@ -838,9 +1385,18 @@
     var pct = state.peakRms > 0 ? Math.min(100, (t.micRms / state.peakRms) * 100) : 0;
     el('barFill').style.width = pct.toFixed(0) + '%';
 
-    if (Array.isArray(t.histT) && t.histT.length) drawSpark(t.histT);
+    if (Array.isArray(t.histT) && t.histT.length) { drawSpark(t.histT); showStats('temp', t.histT, 1); }
+    if (Array.isArray(t.histH) && t.histH.length) { drawChart('chartHumidity', t.histH, '%', '#0d9488'); showStats('hum', t.histH, 1); }
+    if (Array.isArray(t.histP) && t.histP.length) { drawChart('chartPressure', t.histP, 'hPa', '#8b5cf6'); showStats('press', t.histP, 1); }
+    if (Number.isFinite(t.micRms)) {
+      state.micSeries.push(t.micRms);
+      if (state.micSeries.length > 180) state.micSeries.shift();
+      drawChart('chartMic', state.micSeries, '', '#f97316');
+    }
+    if (Number.isFinite(Number(t.page))) state.lastPage = Number(t.page);
     if (Number.isFinite(t.p)) updatePressure(t.p);
     persist('samples', t);
+    sendCloudTelemetry(t);
   }
 
   function handleLine(line) {
@@ -848,105 +1404,85 @@
     try { obj = JSON.parse(line); } catch (e) { return; }
     if (!obj || typeof obj !== 'object') return;
     if (obj.type === 'telemetry') {
+      markDeviceMessage(obj);
       applyTelemetry(obj);
     } else if (obj.type === 'decision' && typeof obj.msg === 'string') {
-      if (obj.msg.indexOf('Wake word') === 0) {
-        state.wakeCount++;
-        set('vWake', String(state.wakeCount));
-      }
-      logRow(timeStr(), catOf(obj.msg), obj.msg);
+      markDeviceMessage(obj);
+      handleDeviceEvent(obj);
     }
+  }
+
+  function markDeviceMessage(message) {
+    state.lastMessageAt = Date.now();
+    state.lastSeenAt = state.lastMessageAt;
+    try { sessionStorage.setItem('deskpalLastMessageAt', String(state.lastSeenAt)); } catch (e) {}
+    if (message && message.type === 'telemetry' && Number.isFinite(Number(message.uptimeMs))) {
+      var uptime = Number(message.uptimeMs);
+      if (state.lastDeviceUptimeMs !== null && uptime < state.lastDeviceUptimeMs) {
+        state.lastDeviceEventId = 0;
+        try { sessionStorage.setItem('deskpalLastDeviceEventId', '0'); } catch (e) {}
+      }
+      state.lastDeviceUptimeMs = uptime;
+      try { sessionStorage.setItem('deskpalLastDeviceUptimeMs', String(uptime)); } catch (e) {}
+    }
+    state.connected = true;
+    updateConnUI();
   }
 
   function updateConnUI() {
     var s = el('connStatus');
+    state.connected = !!state.lastMessageAt && Date.now() - state.lastMessageAt <= 8000;
+    el('liveReadings').classList.toggle('is-stale', !state.connected);
     if (state.connected) {
-      s.textContent = state.wifiTimer ? 'connected over Wi-Fi' : 'connected over USB serial';
+      s.textContent = 'Connected';
       s.className = 'status on';
-      el('btnConnect').disabled = true;
-      el('btnDisconnect').disabled = false;
+      el('btnWifi').textContent = 'Reconnect DeskPal';
       el('btnSetTimer').disabled = false;
+      el('btnSetTempOffset').disabled = false;
+      set('eventSourceNote', 'Live device events; up to 32 recent events can be recovered after reconnecting.');
     } else {
-      s.textContent = 'not connected';
+      var lastSeen = state.lastSeenAt ? new Date(state.lastSeenAt).toLocaleTimeString() : 'never';
+      s.textContent = 'Disconnected - last seen ' + lastSeen;
       s.className = 'status off';
-      el('btnConnect').disabled = false;
-      el('btnDisconnect').disabled = true;
+      el('btnWifi').textContent = 'Connect to DeskPal';
       el('btnSetTimer').disabled = true;
+      el('btnSetTempOffset').disabled = true;
+      set('eventSourceNote', 'Connect to see live device events.');
+    }
+    updateComfortControls();
+    if (pair.client) {
+      if (state.connected) pairStatus('Connected - live data received', true);
+      else if (state.lastSeenAt) pairStatus('Disconnected - last seen ' + new Date(state.lastSeenAt).toLocaleTimeString(), false);
+      else pairStatus('Linked. Waiting for DeskPal data…', false);
     }
   }
 
   function resetTiles() {
-    var ids = ['vTemp','vHum','vPress','vMood','vComfort','vAnom','vInf','vClimate','vBatt','vMute','vSensorState','vModelState',
+    var ids = ['vTemp','vRawTemp','vHum','vPress','vMood','vComfort','vAnom','vInf','vClimate','vBatt','vMute','vSensorState','vModelState',
                'pNow','pStart','pDelta','pClass','pWindow','vRms','vPeak'];
     for (var i = 0; i < ids.length; i++) set(ids[i], 'no link');
+    state.mood = 'NORMAL';
+    set('faceMood', 'Waiting for DeskPal mood');
+    if (renderMoodEyes) renderMoodEyes();
     el('tileAnom').className = 'tile';
+    renderPersonalComfort({});
     el('barFill').style.width = '0%';
     drawSpark(null);
+    drawChart('chartHumidity', null, '%', '#0d9488'); drawChart('chartPressure', null, 'hPa', '#8b5cf6'); drawChart('chartMic', null, '', '#f97316');
+    ['temp','hum','press'].forEach(function (prefix) { ['Min','Avg','Max'].forEach(function (suffix) { set(prefix + suffix, '—'); }); });
   }
 
-  async function readLoop() {
-    var decoder = new TextDecoder();
-    var buf = '';
-    while (state.port && state.port.readable) {
-      var reader = state.port.readable.getReader();
-      state.reader = reader;
-      try {
-        for (;;) {
-          var res = await reader.read();
-          if (res.done) break;
-          buf += decoder.decode(res.value, { stream: true });
-          var idx;
-          while ((idx = buf.indexOf('\n')) >= 0) {
-            var line = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 1);
-            if (line.charAt(0) === '{') handleLine(line);
-          }
-        }
-      } catch (e) {
-        break;
-      } finally {
-        reader.releaseLock();
-        state.reader = null;
-      }
-      break;
-    }
+  function stopWifiPolling() {
+    if (state.wifiTimer) { clearInterval(state.wifiTimer); activeIntervals.delete(state.wifiTimer); state.wifiTimer = null; }
+    if (state.wifiAbortController) { state.wifiAbortController.abort(); state.wifiAbortController = null; }
+    state.wifiPollInFlight = false;
+  }
+
+  function disconnect() {
+    stopWifiPolling();
+    disconnectPair();
     state.connected = false;
-    updateConnUI();
-    resetTiles();
-  }
-
-  async function connect() {
-    if (!('serial' in navigator)) {
-      el('connStatus').textContent = 'Web Serial unsupported, use Chrome or Edge';
-      el('connStatus').className = 'status off';
-      return;
-    }
-    try {
-      var port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 115200 });
-      state.port = port;
-      state.connected = true;
-      state.connectTime = Date.now();
-      state.pSamples = [];
-      state.peakRms = 0;
-      state.wakeCount = 0;
-      set('vWake', '0');
-      updateConnUI();
-      logRow(timeStr(), 'System', 'dashboard connected');
-      readLoop();
-    } catch (e) {
-      el('connStatus').textContent = 'connect failed: ' + e.message;
-      el('connStatus').className = 'status off';
-    }
-  }
-
-  async function disconnect() {
-    if (state.wifiTimer) { clearInterval(state.wifiTimer); state.wifiTimer = null; }
-    try { if (state.reader) await state.reader.cancel(); } catch (e) {}
-    try { if (state.port) await state.port.close(); } catch (e) {}
-    state.port = null;
-    state.reader = null;
-    state.connected = false;
+    state.lastMessageAt = 0;
     state.wifiBase = ''; state.wifiToken = '';
     updateConnUI();
     resetTiles();
@@ -957,30 +1493,115 @@
     var base = el('deviceUrl').value.trim().replace(/\/$/, '');
     var token = el('deviceToken').value.trim();
     if (!base) return;
-    if (!token) { el('connStatus').textContent = 'Enter the device token printed in Serial Monitor'; el('connStatus').className = 'status off'; return; }
+    if (!token) { el('connStatus').textContent = 'Open the DeskPal setup page over Wi-Fi to retrieve its token'; el('connStatus').className = 'status off'; return; }
+    stopWifiPolling();
+    disconnectPair();
+    state.wifiBase = ''; state.wifiToken = '';
+    state.connected = false; state.lastMessageAt = 0;
+    updateConnUI();
+    var controller = new AbortController();
+    state.wifiAbortController = controller;
     try {
-      var response = await fetch(base + '/api/telemetry', { cache: 'no-store', headers: { 'X-DeskPal-Token': token } });
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      var data = await response.json();
-      if (!data || data.type !== 'telemetry') throw new Error('invalid device response');
-      await disconnect();
-      state.connected = true; state.connectTime = Date.now(); state.pSamples = []; state.peakRms = 0;
-      state.wifiBase = base; state.wifiToken = token;
-      handleLine(JSON.stringify(data));
-      state.wifiTimer = setInterval(async function () {
+      var addresses = [base];
+      if (base !== 'http://192.168.4.1') addresses.push('http://192.168.4.1');
+      var response = null, data = null, actualBase = base, lastError = null;
+      for (var i = 0; i < addresses.length; i++) {
         try {
-          var res = await fetch(base + '/api/telemetry', { cache: 'no-store', headers: { 'X-DeskPal-Token': token } });
+          response = await fetch(addresses[i] + '/api/telemetry', { cache: 'no-store', headers: { 'X-DeskPal-Token': token }, signal: controller.signal });
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          data = await response.json(); actualBase = addresses[i]; break;
+        } catch (attemptError) { lastError = attemptError; }
+      }
+      if (!data) throw lastError || new Error('Could not reach DeskPal');
+      if (!data || data.type !== 'telemetry') throw new Error('invalid device response');
+      state.connectTime = Date.now(); state.pSamples = []; state.peakRms = 0; state.micSeries = []; state.lastPage = null;
+      state.wifiBase = actualBase; state.wifiToken = token;
+      try { sessionStorage.setItem('deskpalConnectionMode', 'wifi'); } catch (e) {}
+      sessionStorage.setItem('deskpalDeviceUrl', actualBase);
+      sessionStorage.setItem('deskpalDeviceToken', token);
+      handleLine(JSON.stringify(data));
+      try { await syncWifiEvents(); } catch (eventError) { /* Telemetry polling remains available if event history is temporarily unavailable. */ }
+      state.wifiTimer = scheduleInterval(async function () {
+        if (state.wifiPollInFlight || !state.wifiAbortController || state.wifiAbortController.signal.aborted) return;
+        state.wifiPollInFlight = true;
+        try {
+          var res = await fetch(actualBase + '/api/telemetry', { cache: 'no-store', headers: { 'X-DeskPal-Token': token }, signal: controller.signal });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           handleLine(JSON.stringify(await res.json()));
+          await syncWifiEvents();
         } catch (e) {
-          clearInterval(state.wifiTimer); state.wifiTimer = null; state.connected = false;
-          el('connStatus').textContent = 'Wi-Fi disconnected: ' + e.message; el('connStatus').className = 'status off';
-          updateConnUI();
+          if (e.name !== 'AbortError') updateConnUI();
+        } finally {
+          state.wifiPollInFlight = false;
         }
       }, 1000);
+      state.wifiAbortController = controller;
       updateConnUI();
     } catch (e) {
-      el('connStatus').textContent = 'Wi-Fi connect failed: ' + e.message; el('connStatus').className = 'status off';
+      if (e.name !== 'AbortError') {
+        state.wifiAbortController = null;
+        el('connStatus').textContent = 'Wi-Fi connect failed: ' + e.message; el('connStatus').className = 'status off';
+      }
+    }
+  }
+
+  function wifiApiSettings() {
+    return {
+      base: (state.wifiTimer ? state.wifiBase : el('deviceUrl').value.trim()).replace(/\/$/, ''),
+      token: el('deviceToken').value.trim()
+    };
+  }
+
+  async function scanDeviceWifi() {
+    var settings = wifiApiSettings();
+    if (!settings.base || !settings.token) { set('wifiStatus', 'Enter DeskPal’s URL and device token above first.'); return; }
+    el('btnScanWifi').disabled = true;
+    set('wifiStatus', 'Scanning nearby networks…'); el('wifiStatus').className = 'status off';
+    try {
+      var data;
+      for (var attempt = 0; attempt < 16; attempt++) {
+        var response = await fetch(settings.base + '/api/wifi/scan', { cache: 'no-store', headers: { 'X-DeskPal-Token': settings.token } });
+        data = await response.json();
+        if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+        if (data.state === 'complete') break;
+        await new Promise(function (resolve) { scheduleTimeout(resolve, 750); });
+      }
+      if (!data || data.state !== 'complete') throw new Error('Scan took too long. Try again.');
+      var select = el('wifiNetwork'), list = el('wifiNetworks'); list.replaceChildren();
+      (data.networks || []).forEach(function (network) {
+        var option = document.createElement('option'); option.value = network.ssid;
+        option.label = network.ssid + ' (' + network.rssi + ' dBm)'; list.appendChild(option);
+      });
+      if (list.options.length && !select.value) select.value = list.options[0].value;
+      el('btnSaveWifi').disabled = !select.value.trim();
+      set('wifiStatus', list.options.length ? 'Choose a network or type its name, then enter the password.' : 'No networks found. You can still type a network name manually.');
+      el('wifiStatus').className = 'status ' + (list.options.length ? 'on' : 'off');
+    } catch (error) {
+      set('wifiStatus', 'Could not scan: ' + error.message); el('wifiStatus').className = 'status off';
+    } finally { el('btnScanWifi').disabled = false; }
+  }
+
+  async function saveDeviceWifi() {
+    var settings = wifiApiSettings(), ssid = el('wifiNetwork').value.trim(), password = el('wifiPassword').value;
+    if (!settings.base || !settings.token) { set('wifiStatus', 'Enter DeskPal’s URL and device token above first.'); return; }
+    if (!ssid || (password.length > 0 && password.length < 8)) {
+      set('wifiStatus', 'Choose a network. Its password must be at least 8 characters (leave blank for an open network).');
+      el('wifiStatus').className = 'status off'; return;
+    }
+    el('btnSaveWifi').disabled = true;
+    try {
+      var response = await fetch(settings.base + '/api/wifi', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-DeskPal-Token': settings.token },
+        body: JSON.stringify({ ssid: ssid, password: password })
+      });
+      var data = await response.json();
+      if (!response.ok) throw new Error(data.error || ('HTTP ' + response.status));
+      el('wifiPassword').value = '';
+      set('wifiStatus', 'Saved. DeskPal is restarting to join “' + ssid + '”. Reconnect after it comes back online.');
+      el('wifiStatus').className = 'status on';
+    } catch (error) {
+      set('wifiStatus', 'Could not save Wi-Fi: ' + error.message); el('wifiStatus').className = 'status off';
+      el('btnSaveWifi').disabled = false;
     }
   }
 
@@ -991,26 +1612,18 @@
       el('timerStatus').className = 'status off';
       return;
     }
-    if (!state.connected) { set('timerStatus', 'Connect to DeskPal first.'); return; }
-    set('timerStatus', 'Sending timer duration…');
+    if (!state.wifiTimer) { set('timerStatus', 'Connect to DeskPal over Wi-Fi first.'); return; }
+    set('timerStatus', 'Sending timer duration...');
     try {
-      if (state.wifiTimer) {
-        var response = await fetch(state.wifiBase + '/api/timer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-DeskPal-Token': state.wifiToken },
-          body: JSON.stringify({ minutes: minutes })
-        });
-        var result = await response.json();
-        if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
-        state.timerMinutes = result.timerMinutes;
-        set('timerStatus', 'Timer set to ' + state.timerMinutes + ' min; now paused.');
-      } else {
-        var writer = state.port.writable.getWriter();
-        try {
-          await writer.write(new TextEncoder().encode(JSON.stringify({ cmd: 'setTimer', minutes: minutes }) + '\n'));
-        } finally { writer.releaseLock(); }
-        set('timerStatus', 'Sent. Waiting for DeskPal…');
-      }
+      var response = await fetch(state.wifiBase + '/api/timer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-DeskPal-Token': state.wifiToken },
+        body: JSON.stringify({ minutes: minutes })
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
+      state.timerMinutes = result.timerMinutes;
+      set('timerStatus', 'Timer set to ' + state.timerMinutes + ' min; now paused.');
       el('timerStatus').className = 'status on';
     } catch (e) {
       set('timerStatus', 'Could not set timer: ' + e.message);
@@ -1018,143 +1631,292 @@
     }
   }
 
-  // DeskPal 2D Pixel Eyes Animation
+  async function setTemperatureCorrection() {
+    var offset = Number(el('tempOffset').value);
+    if (!Number.isFinite(offset) || offset < -10 || offset > 10) {
+      set('calibrationStatus', 'Choose a correction from -10 to +10 C.');
+      el('calibrationStatus').className = 'status off';
+      return;
+    }
+    if (!state.wifiTimer) { set('calibrationStatus', 'Connect to DeskPal over Wi-Fi first.'); return; }
+    try {
+      var response = await fetch(state.wifiBase + '/api/calibration', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-DeskPal-Token': state.wifiToken },
+        body: JSON.stringify({ offset: offset })
+      });
+      var result = await response.json();
+      if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
+      state.tempOffsetC = Number(result.tempOffsetC);
+      set('calibrationStatus', 'Saved: ' + state.tempOffsetC.toFixed(1) + ' C correction');
+      el('calibrationStatus').className = 'status on';
+    } catch (e) {
+      set('calibrationStatus', 'Could not save correction: ' + e.message);
+      el('calibrationStatus').className = 'status off';
+    }
+  }
+
+  function updateComfortControls() {
+    var mqttReady = !!(pair && pair.client && pair.client.connected);
+    var httpReady = !!(state.wifiBase && state.wifiToken);
+    var enabled = !!state.connected && (mqttReady || httpReady) && !state.comfortInFlight;
+    ['comfortTempCold', 'comfortTempPerfect', 'comfortTempHot', 'comfortHumDry',
+     'comfortHumWet', 'comfortUndo', 'comfortReset'].forEach(function (id) {
+      el(id).disabled = !enabled;
+    });
+    if (!enabled && !state.connected) {
+      set('comfortStatus', 'Connect to DeskPal to rate comfort.');
+      el('comfortStatus').className = 'status off';
+    } else if (enabled && /Connect to DeskPal/.test(el('comfortStatus').textContent)) {
+      set('comfortStatus', 'Connected. Send feedback to update the estimates.');
+      el('comfortStatus').className = 'status on';
+    }
+  }
+
+  async function sendComfortCommand(command) {
+    if (!state.connected) {
+      set('comfortStatus', 'Connect to DeskPal to send feedback.');
+      el('comfortStatus').className = 'status off';
+      return;
+    }
+    state.comfortInFlight = true;
+    updateComfortControls();
+    set('comfortStatus', 'Sending feedback…');
+    el('comfortStatus').className = 'status off';
+    try {
+      if (pair && pair.client && pair.client.connected) {
+        var topic = 'deskpal/v1/' + pair.code + '/cmd';
+        await new Promise(function (resolve, reject) {
+          pair.client.publish(topic, JSON.stringify(command), { qos: 0 }, function (error) {
+            if (error) reject(error); else resolve();
+          });
+        });
+        set('comfortStatus', 'Sent. Waiting for DeskPal telemetry…');
+      } else if (state.wifiBase && state.wifiToken) {
+        var response = await fetch(state.wifiBase + '/api/comfort', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-DeskPal-Token': state.wifiToken },
+          body: JSON.stringify(command)
+        });
+        var result = await response.json();
+        if (!response.ok) throw new Error(result.error || ('HTTP ' + response.status));
+        set('comfortStatus', 'Saved. Updated estimates will appear with telemetry.');
+      } else {
+        throw new Error('Connection is not ready');
+      }
+      if (command.cmd === 'vote') sendCloudFeedback(command.label, command.kind);
+      el('comfortStatus').className = 'status on';
+    } catch (error) {
+      set('comfortStatus', 'Could not send feedback: ' + error.message);
+      el('comfortStatus').className = 'status off';
+    } finally {
+      state.comfortInFlight = false;
+      updateComfortControls();
+    }
+  }
+
+  function sendComfortVote(kind, label) {
+    sendComfortCommand({ cmd: 'vote', kind: kind, label: label });
+  }
+
+  function resetComfortFromDashboard() {
+    if (!window.confirm('Reset the learned temperature and humidity ranges?')) return;
+    sendComfortCommand({ cmd: 'reset_comfort' });
+  }
+  // Mood-linked pixel face. The mood value comes directly from ESP32 telemetry.
   function initPixelEyes() {
     var c = el('deskpalEyes');
     if (!c) return;
-    var ctx = c.getContext('2d');
-
-    var P = 5; // Pixel unit size (matches the 2D grid)
-    var eyeW = 7;
-    var eyeH = 9;
-    var eyeGap = 3;
-    var totalW = eyeW * 2 + eyeGap;
-    var startX = Math.round((c.width - totalW * P) / 2);
-    var startY = Math.round((c.height - eyeH * P) / 2);
-
-    // 0 = background (#ffffff), 1 = black (#0f0e14), 2 = white highlight/sclera (#ffffff)
-    var EYE_OPEN = [
-      [0,0,1,1,1,0,0],
-      [0,1,1,2,2,1,0],
-      [1,1,1,1,2,2,1],
-      [1,1,2,1,2,2,1], // Specular highlight at [3,2]
-      [1,1,1,1,2,2,1],
-      [1,1,1,1,2,2,1],
-      [1,1,1,1,2,2,1],
-      [0,1,1,2,2,1,0],
-      [0,0,1,1,1,0,0]
-    ];
-
-    var EYE_HALF = [
-      [0,0,1,1,1,0,0],
-      [0,1,1,2,2,1,0],
-      [1,1,2,1,2,2,1],
-      [0,1,1,2,2,1,0],
-      [0,0,1,1,1,0,0]
-    ];
-
-    var EYE_CLOSED = [
-      [0,1,1,1,1,1,0],
-      [1,1,1,1,1,1,1]
-    ];
-
-    var blinkStage = 0; // 0=open, 1=half, 2=closed
-    var isBlinking = false;
-
-    function drawEye(matrix, originX, originY) {
-      for (var r = 0; r < matrix.length; r++) {
-        for (var col = 0; col < matrix[r].length; col++) {
-          var val = matrix[r][col];
-          if (val === 1) {
-            ctx.fillStyle = '#0f0e14';
-            ctx.fillRect(originX + col * P, originY + r * P, P, P);
-          } else if (val === 2) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(originX + col * P, originY + r * P, P, P);
-          }
-        }
-      }
+    var ctx = c.getContext('2d'), P = 5, eyeW = 7, eyeGap = 3;
+    var startX = Math.round((c.width - (eyeW * 2 + eyeGap) * P) / 2);
+    var startY = Math.round((c.height - 9 * P) / 2);
+    var blinkStage = 0, isBlinking = false, gaze = 0;
+    var OPEN = [[0,0,1,1,1,0,0],[0,1,1,2,2,1,0],[1,1,1,1,2,2,1],[1,1,2,1,2,2,1],[1,1,1,1,2,2,1],[1,1,1,1,2,2,1],[1,1,1,1,2,2,1],[0,1,1,2,2,1,0],[0,0,1,1,1,0,0]];
+    var HALF = [[0,0,1,1,1,0,0],[0,1,1,2,2,1,0],[1,1,2,1,2,2,1],[0,1,1,2,2,1,0],[0,0,1,1,1,0,0]];
+    var CLOSED = [[0,1,1,1,1,1,0],[1,1,1,1,1,1,1]];
+    function drawMatrix(matrix, x, y) {
+      matrix.forEach(function (row, r) { row.forEach(function (v, col) {
+        if (!v) return;
+        ctx.fillStyle = v === 1 ? '#111019' : '#ffffff';
+        ctx.fillRect(x + col * P, y + r * P, P, P);
+      }); });
     }
-
+    function heart(x, y, size) {
+      ctx.save(); ctx.translate(x, y); ctx.scale(size / 16, size / 16); ctx.fillStyle = '#ec4899';
+      ctx.beginPath(); ctx.moveTo(0, 14); ctx.bezierCurveTo(-18, 2, -10, -8, 0, -2); ctx.bezierCurveTo(10, -8, 18, 2, 0, 14); ctx.fill(); ctx.restore();
+    }
     function render() {
-      ctx.fillStyle = '#f5e4ea';
-      ctx.fillRect(0, 0, c.width, c.height);
-
-      var leftX = startX;
-      var rightX = startX + (eyeW + eyeGap) * P;
-
-      if (blinkStage === 0) {
-        drawEye(EYE_OPEN, leftX, startY);
-        drawEye(EYE_OPEN, rightX, startY);
-      } else if (blinkStage === 1) {
-        var halfY = startY + 2 * P;
-        drawEye(EYE_HALF, leftX, halfY);
-        drawEye(EYE_HALF, rightX, halfY);
-      } else if (blinkStage === 2) {
-        var closedY = startY + 4 * P;
-        drawEye(EYE_CLOSED, leftX, closedY);
-        drawEye(EYE_CLOSED, rightX, closedY);
+      var mood = String(state.mood || 'NORMAL').toUpperCase();
+      var cyan = '#39f2eb', dark = '#061015', white = '#b8fffc';
+      var lx = 32, rx = 74, y = 26, dx = (gaze - 1) * 2;
+      ctx.fillStyle = '#05070b'; ctx.fillRect(0, 0, c.width, c.height);
+      ctx.fillStyle = '#111923'; ctx.strokeStyle = '#374957'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(3, 3, 118, 58, 12); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#17323a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(7, 7, 110, 50, 9); ctx.stroke();
+      // Small side pieces suggest the headphones in the reference while keeping
+      // the face itself uncluttered.
+      ctx.fillStyle = '#222b42'; ctx.fillRect(0, 23, 5, 18); ctx.fillRect(119, 23, 5, 18);
+      ctx.fillStyle = cyan; ctx.fillRect(1, 27, 3, 10); ctx.fillRect(120, 27, 3, 10);
+      ctx.shadowColor = cyan; ctx.shadowBlur = 7; ctx.fillStyle = cyan;
+      function eyeRect(x, yy, w, h, r) {
+        ctx.beginPath(); ctx.roundRect(x, yy, w, h, r || 4); ctx.fill();
       }
+      function eyeArc(x) {
+        ctx.beginPath(); ctx.moveTo(x, y + 13); ctx.quadraticCurveTo(x + 9, y - 1, x + 19, y + 13);
+        ctx.strokeStyle = cyan; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.stroke();
+      }
+      function diamond(x) {
+        ctx.beginPath(); ctx.moveTo(x + 9, y - 1); ctx.lineTo(x + 19, y + 8); ctx.lineTo(x + 9, y + 17); ctx.lineTo(x, y + 8); ctx.closePath(); ctx.fill();
+      }
+      if (blinkStage > 0 || mood === 'SLEEPY') {
+        eyeRect(lx + 1, y + 5, 19, 4, 2); eyeRect(rx + 1, y + 5, 19, 4, 2);
+        if (mood === 'SLEEPY') { ctx.shadowBlur = 0; ctx.fillStyle = white; ctx.font = 'bold 8px sans-serif'; ctx.fillText('z', 103, 19); ctx.fillText('z', 109, 13); }
+      } else if (mood === 'HAPPY') {
+        eyeArc(lx); eyeArc(rx);
+      } else if (mood === 'LOVE') {
+        heart(lx + 9, y + 7, 15); heart(rx + 9, y + 7, 15);
+      } else if (mood === 'EXCITED') {
+        diamond(lx); diamond(rx);
+      } else if (mood === 'ANGRY') {
+        eyeRect(lx, y + 5, 20, 8, 3); eyeRect(rx, y + 5, 20, 8, 3);
+        ctx.shadowBlur = 0; ctx.fillStyle = dark;
+        ctx.beginPath(); ctx.moveTo(lx - 1, y + 1); ctx.lineTo(lx + 21, y + 6); ctx.lineTo(lx + 21, y + 9); ctx.lineTo(lx - 1, y + 5); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(rx + 21, y + 1); ctx.lineTo(rx - 1, y + 6); ctx.lineTo(rx - 1, y + 9); ctx.lineTo(rx + 21, y + 5); ctx.fill();
+      } else if (mood === 'SCARED') {
+        eyeRect(lx + 2, y - 2, 17, 19, 6); eyeRect(rx + 2, y - 2, 17, 19, 6);
+        ctx.shadowBlur = 0; ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(lx + 12 + dx, y + 7, 3, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(rx + 12 + dx, y + 7, 3, 0, Math.PI * 2); ctx.fill();
+      } else if (mood === 'SURPRISED') {
+        eyeRect(lx + 2, y - 2, 16, 19, 3); eyeRect(rx + 2, y - 2, 16, 19, 3);
+      } else if (mood === 'SAD') {
+        eyeRect(lx + 1, y + 3, 19, 11, 5); eyeRect(rx + 1, y + 3, 19, 11, 5);
+        ctx.shadowBlur = 0; ctx.fillStyle = dark;
+        ctx.beginPath(); ctx.moveTo(lx, y + 2); ctx.lineTo(lx + 21, y + 2); ctx.lineTo(lx, y + 9); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(rx, y + 2); ctx.lineTo(rx + 21, y + 2); ctx.lineTo(rx + 21, y + 9); ctx.fill();
+        ctx.fillStyle = '#50bfff'; ctx.fillRect(lx + 15, y + 16, 3, 5);
+      } else if (mood === 'COLD') {
+        eyeRect(lx + 2, y + 5, 17, 6, 2); eyeRect(rx + 2, y + 5, 17, 6, 2);
+        ctx.shadowBlur = 0; ctx.strokeStyle = '#83cfff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(57, 49); ctx.lineTo(67, 49); ctx.moveTo(57, 53); ctx.lineTo(67, 53); ctx.stroke();
+      } else if (mood === 'SUSPICIOUS') {
+        eyeRect(lx + 2, y + 7, 17, 6, 2); eyeRect(rx + 2, y + 1, 17, 15, 5);
+        ctx.shadowBlur = 0; ctx.fillStyle = dark; ctx.beginPath(); ctx.moveTo(lx, y + 1); ctx.lineTo(lx + 21, y + 5); ctx.lineTo(lx + 21, y + 8); ctx.lineTo(lx, y + 4); ctx.fill();
+      } else {
+        eyeRect(lx, y + 2, 21, 13, 5); eyeRect(rx, y + 2, 21, 13, 5);
+      }
+      ctx.shadowBlur = 0;
     }
-
-    function doBlink(onComplete) {
-      if (isBlinking && !onComplete) return;
-      isBlinking = true;
-      blinkStage = 1;
-      render();
-      setTimeout(function () {
-        blinkStage = 2;
-        render();
-        setTimeout(function () {
-          blinkStage = 1;
-          render();
-          setTimeout(function () {
-            blinkStage = 0;
-            render();
-            isBlinking = false;
-            if (onComplete) onComplete();
-          }, 50);
-        }, 80);
-      }, 50);
+    renderMoodEyes = render;
+    function doBlink(done) {
+      if (isBlinking && !done) return;
+      isBlinking = true; blinkStage = 1; render();
+      scheduleTimeout(function () { blinkStage = 2; render(); scheduleTimeout(function () {
+        blinkStage = 1; render(); scheduleTimeout(function () { blinkStage = 0; isBlinking = false; render(); if (done) done(); }, 55);
+      }, 75); }, 55);
     }
-
     function scheduleBlink() {
-      var delay = 2400 + Math.random() * 3000;
-      setTimeout(function () {
-        doBlink(function () {
-          // Occasional cute double-blink
-          if (Math.random() < 0.28) {
-            setTimeout(function () {
-              doBlink(scheduleBlink);
-            }, 120);
-          } else {
-            scheduleBlink();
-          }
-        });
-      }, delay);
+      scheduleTimeout(function () { doBlink(function () {
+        if (Math.random() < .2) scheduleTimeout(function () { doBlink(scheduleBlink); }, 140);
+        else scheduleBlink();
+      }); }, state.mood === 'SLEEPY' ? 1600 + Math.random()*900 : 2300 + Math.random()*2800);
     }
-
-    var faceBox = el('deskpalFaceBox');
-    if (faceBox) {
-      faceBox.addEventListener('click', function () {
-        doBlink();
-      });
-    }
-
-    render();
-    scheduleBlink();
+    el('deskpalFaceBox').addEventListener('click', function () { gaze = (gaze + 1) % 3; doBlink(); });
+    render(); scheduleBlink();
   }
 
-  el('btnConnect').addEventListener('click', connect);
+
+  var pair = { client: null, lastMsg: 0, watch: null, code: '', subscribed: false };
+  function pairStatus(msg, on) { set('pairStatus', msg); el('pairStatus').className = 'status ' + (on ? 'on' : 'off'); }
+  function disconnectPair() {
+    if (pair.client) { try { pair.client.end(true); } catch (e) {} pair.client = null; }
+    if (pair.watch) { clearInterval(pair.watch); activeIntervals.delete(pair.watch); pair.watch = null; }
+    pair.lastMsg = 0; pair.code = ''; pair.subscribed = false;
+  }
+  function connectPair() {
+    var code = el('pairCode').value.trim().toUpperCase();
+    el('pairCode').value = code;
+    if (!/^[A-Z2-9]{8}$/.test(code)) { pairStatus('Enter the 8-character code shown on DeskPal.', false); return; }
+    if (typeof mqtt === 'undefined') { pairStatus('Could not load the connection library. Check your internet.', false); return; }
+    if (pair.client && pair.code === code) return;
+    disconnectPair();
+    stopWifiPolling();
+    state.wifiBase = ''; state.wifiToken = '';
+    state.lastMessageAt = 0; state.connected = false;
+    updateConnUI();
+    try { localStorage.setItem('deskpalPairCode', code); } catch (e) {}
+    try { sessionStorage.setItem('deskpalConnectionMode', 'pair'); } catch (e) {}
+    state.pSamples = []; state.peakRms = 0; state.micSeries = []; state.lastPage = null; state.connectTime = Date.now();
+    var base = 'deskpal/v1/' + code + '/';
+    pairStatus('Connecting…', false);
+    var c = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', { reconnectPeriod: 3000, connectTimeout: 10000 });
+    pair.client = c; pair.code = code; pair.subscribed = false;
+    c.on('connect', function () {
+      if (pair.client !== c) return;
+      if (!pair.subscribed) {
+        pair.subscribed = true;
+        c.subscribe([base + 'telemetry', base + 'events']);
+      }
+      updateConnUI();
+    });
+    c.on('message', function (topic, payload) {
+      if (pair.client !== c) return;
+      pair.lastMsg = Date.now();
+      handleLine(payload.toString());
+      if (!state.lastMessageAt || Date.now() - state.lastMessageAt > 8000) pairStatus('Linked. Waiting for DeskPal data…', false);
+    });
+    c.on('error', function (e) { pairStatus('Connection problem: ' + (e && e.message ? e.message : 'unknown'), false); });
+    c.on('offline', function () { if (pair.client === c) { pair.subscribed = false; updateConnUI(); } });
+    c.on('close', function () { if (pair.client === c) { pair.subscribed = false; updateConnUI(); } });
+    pair.watch = scheduleInterval(updateConnUI, 1000);
+  }
+  el('btnPair').addEventListener('click', connectPair);
+  el('pairCode').addEventListener('keydown', function (e) { if (e.key === 'Enter') connectPair(); });
   el('btnWifi').addEventListener('click', connectWifi);
   el('btnExport').addEventListener('click', exportHistory);
   el('btnClearHistory').addEventListener('click', clearHistory);
-  el('btnDisconnect').addEventListener('click', disconnect);
   el('btnSetTimer').addEventListener('click', setTimerFromDashboard);
+  el('btnSetTempOffset').addEventListener('click', setTemperatureCorrection);
+  el('btnScanWifi').addEventListener('click', scanDeviceWifi);
+  el('btnSaveWifi').addEventListener('click', saveDeviceWifi);
+  el('wifiNetwork').addEventListener('input', function () { el('btnSaveWifi').disabled = !el('wifiNetwork').value.trim(); });
+  el('btnCloudConnect').addEventListener('click', connectCloudMemory);
+  el('btnCloudDisconnect').addEventListener('click', disconnectCloudMemory);
+  el('comfortTempCold').addEventListener('click', function () { sendComfortVote('temp', 'cold'); });
+  el('comfortTempPerfect').addEventListener('click', function () { sendComfortVote('temp', 'perfect'); });
+  el('comfortTempHot').addEventListener('click', function () { sendComfortVote('temp', 'hot'); });
+  el('comfortHumDry').addEventListener('click', function () { sendComfortVote('hum', 'cold'); });
+  el('comfortHumWet').addEventListener('click', function () { sendComfortVote('hum', 'hot'); });
+  el('comfortUndo').addEventListener('click', function () { sendComfortCommand({ cmd: 'undo' }); });
+  el('comfortReset').addEventListener('click', resetComfortFromDashboard);
+
+  el('deviceUrl').value = sessionStorage.getItem('deskpalDeviceUrl') || 'http://192.168.4.1';
+  el('deviceToken').value = sessionStorage.getItem('deskpalDeviceToken') || '';
+  el('cloudUrl').value = sessionStorage.getItem('deskpalCloudUrl') || '';
+  el('cloudDeviceId').value = sessionStorage.getItem('deskpalCloudDeviceId') || 'deskpal-01';
+  el('cloudToken').value = sessionStorage.getItem('deskpalCloudToken') || '';
 
   updateConnUI();
   resetTiles();
   initPixelEyes();
+  restoreEvents();
+  scheduleInterval(updateConnUI, 1000);
+  function shutdownConnections() {
+    stopWifiPolling();
+    disconnectPair();
+    clearTrackedTimers();
+    state.connected = false;
+    state.lastMessageAt = 0;
+    updateConnUI();
+  }
+  window.addEventListener('pagehide', shutdownConnections);
+  window.addEventListener('beforeunload', shutdownConnections);
+  try {
+    var fromUrl = (location.hash.match(/code=([A-Za-z2-9]{8})/) || [])[1];
+    var saved = fromUrl || localStorage.getItem('deskpalPairCode');
+    var mode = sessionStorage.getItem('deskpalConnectionMode');
+    if ((mode === 'wifi' || !mode) && el('deviceUrl').value && el('deviceToken').value) connectWifi();
+    else if (saved) { el('pairCode').value = saved.toUpperCase(); connectPair(); }
+  } catch (e) {}
 })();
 
 </script>

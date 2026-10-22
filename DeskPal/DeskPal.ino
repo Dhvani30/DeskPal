@@ -16,11 +16,23 @@
 #include <math.h>
 #include "driver/i2s.h"
 #include <esp_task_wdt.h>
+#include "comfort_learner.h"
 
+#if defined(__has_include)
+#if __has_include("DeskPalSecrets.h")
+#include "DeskPalSecrets.h"
+#endif
+#endif
+#ifndef DESKPAL_WEATHER_API_KEY
+#define DESKPAL_WEATHER_API_KEY ""
+#endif
+#ifndef DESKPAL_WIFI_SSID
+#define DESKPAL_WIFI_SSID ""
+#endif
+#ifndef DESKPAL_WIFI_PASS
+#define DESKPAL_WIFI_PASS ""
+#endif
 
-// --- Inlined from DeskPalConfig.h ---
-
-// Board and feature configuration. Select the profile matching the hardware.
 #ifndef USE_SH1106
 #define USE_SH1106   1
 #endif
@@ -33,62 +45,24 @@
 #ifndef ENABLE_WEATHER
 #define ENABLE_WEATHER 1
 #endif
+// CORS "*" is for local prototype testing only; set this to the dashboard origin when hosted.
+#ifndef DESKPAL_CORS_ORIGIN
+#define DESKPAL_CORS_ORIGIN "*"
+#endif
 #if ENABLE_WEATHER
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-
-// --- Inlined from DeskPalTrust.h ---
-
-#include <Arduino.h>
-
-// ISRG Root X1 trust anchor. Keep this CA current during device maintenance.
-static const char OPENWEATHER_ROOT_CA[] PROGMEM = R"cert(-----BEGIN CERTIFICATE-----
-MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
-TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
-cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
-WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
-ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
-MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
-h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
-0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
-A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
-T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
-B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
-B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
-KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
-OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
-jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
-qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
-rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
-HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
-hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
-ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
-3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
-NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
-ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
-TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
-jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
-oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
-4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
-mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
-emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
------END CERTIFICATE-----)cert";
-
-// --- End DeskPalTrust.h ---
-
+#include <PubSubClient.h>
 #endif
 
 #include <Adafruit_BME280.h>
 
-// --- Inlined from DeskPalAssets.h ---
-
-// Small monochrome weather and mood icons stored in flash.
 const unsigned char bmp_clear[] PROGMEM = {0x00,0x00,0x00,0x00,0x00,0x01,0x80,0x00,0x00,0x01,0x80,0x00,0x00,0x01,0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x03,0xc0,0x80,0x00,0x0f,0xf0,0x00,0x00,0x3f,0xfc,0x00,0x00,0x7f,0xfe,0x00,0x00,0xff,0xff,0x00,0x06,0xff,0xff,0x60,0x06,0xff,0xff,0x60,0x06,0xff,0xff,0x60,0x00,0xff,0xff,0x00,0x3e,0xff,0xff,0x7c,0x3e,0xff,0xff,0x7c,0x3e,0xff,0xff,0x7c,0x00,0xff,0xff,0x00,0x06,0xff,0xff,0x60,0x06,0xff,0xff,0x60,0x06,0xff,0xff,0x60,0x00,0xff,0xff,0x00,0x00,0x7f,0xfe,0x00,0x00,0x3f,0xfc,0x00,0x01,0x0f,0xf0,0x80,0x00,0x03,0xc0,0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x80,0x00,0x00,0x01,0x80,0x00,0x00,0x01,0x80,0x00,0x00,0x00,0x00,0x00};
 const unsigned char bmp_clouds[] PROGMEM = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x03,0xe0,0x00,0x00,0x0f,0xf8,0x00,0x00,0x1f,0xfc,0x00,0x00,0x3f,0xfe,0x00,0x00,0x3f,0xff,0x00,0x00,0x7f,0xff,0x80,0x00,0xff,0xff,0xc0,0x00,0xff,0xff,0xe0,0x01,0xff,0xff,0xf0,0x03,0xff,0xff,0xf8,0x07,0xff,0xff,0xfc,0x07,0xff,0xff,0xfc,0x0f,0xff,0xff,0xfe,0x0f,0xff,0xff,0xfe,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x0f,0xff,0xff,0xfe,0x07,0xff,0xff,0xfc,0x03,0xff,0xff,0xf8,0x00,0xff,0xff,0xe0,0x00,0x3f,0xff,0x80,0x00,0x0f,0xfe,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
-const unsigned char bmp_rain[] PROGMEM = {0x00,0x00,0x00,0x00,0x00,0x03,0xe0,0x00,0x00,0x0f,0xf8,0x00,0x00,0x1f,0xfc,0x00,0x00,0x3f,0xfe,0x00,0x00,0x7f,0xff,0x80,0x00,0xff,0xff,0xc0,0x01,0xff,0xff,0xf0,0x03,0xff,0xff,0xf8,0x07,0xff,0xff,0xfc,0x0f,0xff,0xff,0xfe,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x0f,0xff,0xff,0xfe,0x07,0xff,0xff,0xfc,0x03,0xff,0xff,0xf8,0x00,0xff,0xff,0xe0,0x00,0x3f,0xff,0x80,0x00,0x0f,0xfe,0x00,0x00,0x00,0x00,0x00,0x00,0x60,0x0c,0x00,0x00,0x60,0x0c,0x00,0x00,0xe0,0x1c,0x00,0x00,0xc0,0x18,0x00,0x03,0x80,0x70,0x00,0x03,0x80,0x70,0x00,0x03,0x00,0x60,0x00,0x02,0x00,0x40,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+const unsigned char bmp_rain[] PROGMEM = {0x00,0x00,0x00,0x00,0x00,0x03,0xe0,0x00,0x00,0x0f,0xf8,0x00,0x00,0x1f,0xfc,0x00,0x00,0x3f,0xfe,0x00,0x00,0x7f,0xff,0x80,0x00,0xff,0xff,0xc0,0x01,0xff,0xff,0xf0,0x03,0xff,0xff,0xf8,0x07,0xff,0xff,0xfc,0x0f,0xff,0xff,0xfe,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0x0f,0xff,0xff,0xfe,0x07,0xff,0xff,0xfc,0x03,0xff,0xff,0xf8,0x00,0xff,0xff,0xe0,0x00,0x3f,0xff,0x80,0x00,0x0f,0xfe,0x00,0x00,0x00,0x00,0x00,0x00,0x60,0x0c,0x00,0x00,0x60,0x0c,0x00,0x00,0xe0,0x1c,0x00,0x00,0xc0,0x18,0x00,0x03,0x80,0x70,0x00,0x03,0x80,0x70,0x00,0x03,0x00,0x60,0x00,0x02,0x00,0x40,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 const unsigned char mini_sun[] PROGMEM = {0x00,0x00,0x01,0x80,0x00,0x00,0x10,0x08,0x04,0x20,0x03,0xc0,0x27,0xe4,0x07,0xe0,0x07,0xe0,0x27,0xe4,0x03,0xc0,0x04,0x20,0x10,0x08,0x00,0x00,0x01,0x80,0x00,0x00};
 const unsigned char mini_cloud[] PROGMEM = {0x00,0x00,0x00,0x00,0x01,0xc0,0x07,0xe0,0x0f,0xf0,0x1f,0xf8,0x1f,0xf8,0x3f,0xfc,0x3f,0xfc,0x7f,0xfe,0x3f,0xfe,0x1f,0xfc,0x0f,0xf0,0x00,0x00,0x00,0x00,0x00,0x00};
 const unsigned char mini_rain[] PROGMEM = {0x00,0x00,0x00,0x00,0x01,0xc0,0x07,0xe0,0x0f,0xf0,0x1f,0xf8,0x1f,0xf8,0x3f,0xfc,0x3f,0xfc,0x7f,0xfe,0x3f,0xfe,0x1f,0xfc,0x00,0x00,0x44,0x44,0x22,0x22,0x11,0x11};
@@ -98,9 +72,6 @@ const unsigned char bmp_zzz[] PROGMEM = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x3c
 const unsigned char bmp_anger[] PROGMEM = {0x00,0x00,0x11,0x10,0x2a,0x90,0x44,0x40,0x80,0x20,0x80,0x20,0x44,0x40,0x2a,0x90,0x11,0x10,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 const unsigned char bmp_music[] PROGMEM = {0x01,0x80,0x01,0x80,0x01,0x80,0x01,0xc0,0x01,0xe0,0x03,0xf0,0x07,0xe0,0x0f,0xc0,0x07,0x80,0x03,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 const unsigned char bmp_snow[] PROGMEM = {0x99,0x5A,0x3C,0xFF,0xFF,0x3C,0x5A,0x99};
-
-// --- End DeskPalAssets.h ---
-
 
 #ifndef USE_TFLITE
 #define USE_TFLITE 0
@@ -114,22 +85,8 @@ const unsigned char bmp_snow[] PROGMEM = {0x99,0x5A,0x3C,0xFF,0xFF,0x3C,0x5A,0x9
 #define KWS_LABEL_START_TIMER 1
 #define KWS_LABEL_STOP_TIMER 2
 #if USE_TFLITE
-
-// --- Inlined from DeskPalKwsAdapter.h ---
-
-// Integration seam for the generated Edge Impulse Arduino library.
-// Replace this contract after exporting the trained model. Do not set the
-// readiness macro until the implementation has passed the KWS acceptance tests.
 #define DESKPAL_KWS_ADAPTER_READY 0
-
-// Return KWS_LABEL_WAKE / KWS_LABEL_START_TIMER / KWS_LABEL_STOP_TIMER only
-// when the model confidence meets KWS_CONFIDENCE_FLOOR; otherwise return
-// KWS_LABEL_REJECT. The implementation must consume a complete model window
-// from the 16 kHz mono I2S stream and must not retain a pointer to DMA memory.
 int classifyKeywordEdge();
-
-// --- End DeskPalKwsAdapter.h ---
-
 #if !KWS_MODEL_INTEGRATED || !DESKPAL_KWS_ADAPTER_READY
 #error "USE_TFLITE requires an exported Edge Impulse model, adapter implementation, and KWS_MODEL_INTEGRATED=1."
 #endif
@@ -182,9 +139,8 @@ int classifyKeywordEdge();
 
 #define BTN_LONG_PRESS_MS        1500UL
 #define TOUCH_LONG_HOLD_MS       1500UL
-#define OLED_TIMEOUT_MS          0UL // 0 keeps the OLED on; the small LiPo will run down faster.
+#define OLED_TIMEOUT_MS          0UL
 #define TIMER_MIN_MINS           10
-
 
 #define CLIMATE_TEMPERATE 0
 #define CLIMATE_COASTAL 1
@@ -206,16 +162,19 @@ int classifyKeywordEdge();
 
 #define PAGE_EYES 0
 #define PAGE_CLOCK 1
-#define PAGE_ENV 2
-#define PAGE_INSIGHTS 3
-#define PAGE_KWS 4
-#define PAGE_WEATHER 5
-#define PAGE_FORECAST 6
-#define PAGE_WORLD 7
-#define PAGE_TIMER 8
+#define PAGE_WEATHER 2
+#define PAGE_FORECAST 3
+#define PAGE_ENV 4
+#define PAGE_INSIGHTS 5
+#define PAGE_KWS 6
+#define PAGE_TIMER 7
 
 #define SENSOR_GRACE_MS 8000UL
 #define SENSOR_RECOVERY_FAILS 5
+#define ALERT_DEFAULT_TMAX_C 30.0f
+#define ALERT_DEFAULT_TMIN_C 15.0f
+#define ALERT_DEFAULT_HMAX_PCT 80.0f
+#define ALERT_REPEAT_MS 600000UL
 #define COMFORT_OK 0
 #define COMFORT_HOT 1
 #define COMFORT_COLD 2
@@ -225,13 +184,6 @@ int classifyKeywordEdge();
 #define CONFIG_HOLD_MS 3000
 #define CONFIG_AP_PIN_LENGTH 8
 
-
-// --- End DeskPalConfig.h ---
-
-
-// ==================================================
-// 1. STRUCTS
-// ==================================================
 struct Eye {
   float x, y, w, h;
   float targetX, targetY, targetW, targetH;
@@ -255,8 +207,6 @@ struct Eye {
   }
 };
 
-// Comfort zone expressed as center plus half-width derived from the
-// per-region comfortable ranges in getClimateParams().
 struct ClimateParams { float tMid, tHalf, hMid, hHalf; };
 struct ForecastDay { char dayName[4]; int temp; char iconType[16]; };
 struct BuzzerStep { uint16_t onMs; uint16_t offMs; };
@@ -272,9 +222,6 @@ struct WeatherSnapshot {
 };
 #endif
 
-// ==================================================
-// 2. GLOBAL OBJECTS & VARIABLES
-// ==================================================
 #if USE_SH1106
 Adafruit_SH1106G display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 #define OLED_WHITE SH110X_WHITE
@@ -293,6 +240,8 @@ Adafruit_BME280 bme;
 Preferences prefs;
 #if ENABLE_WEATHER
 WebServer configServer(80);
+WiFiClient mqttNet;
+PubSubClient mqtt(mqttNet);
 WeatherSnapshot weatherState = {};
 portMUX_TYPE weatherStateMux = portMUX_INITIALIZER_UNLOCKED;
 TaskHandle_t weatherTaskHandle = nullptr;
@@ -304,9 +253,15 @@ bool micReady = false;
 bool currentTm(struct tm* t);
 
 #if ENABLE_WEATHER
-// Browser dashboards may read the current device state over the local Wi-Fi
-// network. The dashboard persists snapshots in its own IndexedDB database.
 void sendTelemetryApi();
+void sendEventsApi();
+void handleWifiSaveApi();
+void handleTimerApi();
+void handleCalibrationApi();
+void handleAlertsApi();
+void handleComfortApi();
+void mqttComfortCommand(char* topic, byte* payload, unsigned int length);
+void publishComfortTelemetry();
 void handleCorsOptions();
 void loadTelemetryToken();
 WeatherSnapshot getWeatherSnapshot();
@@ -319,7 +274,7 @@ bool requestWeatherFetch();
 int currentPage = 0;
 bool highBrightness = true;
 bool quietMode = false;
-bool micMuted = false; // Start the level monitor enabled; hold the button on the eyes page to mute it.
+bool micMuted = false;
 unsigned long lastPageSwitch = 0;
 
 bool lastTouch = false;
@@ -358,14 +313,53 @@ float pupilScale = 1.0f;
 float press2sAgo = NAN;
 unsigned long press2sTime = 0, lastLiftCheck = 0, liftSuppressUntil = 0;
 
-float envTemp = NAN, envHum = NAN, envPress = NAN, envAlt = NAN;
+float envTemp = NAN, envTempRaw = NAN, envHum = NAN, envPress = NAN, envAlt = NAN;
+float tempOffsetC = TEMP_OFFSET;
+float alertTmax = ALERT_DEFAULT_TMAX_C;
+float alertTmin = ALERT_DEFAULT_TMIN_C;
+float alertHmax = ALERT_DEFAULT_HMAX_PCT;
+ComfortLearner temperatureComfort(1.2f, 2.0f, 12.0f, 30.0f, 18.0f, 38.0f, 2.0f);
+ComfortLearner humidityComfort(0.15f, 12.0f, 15.0f, 60.0f, 50.0f, 95.0f, 15.0f);
+static const size_t COMFORT_BLOB_SIZE = ComfortLearner::SERIALIZED_SIZE * 2U;
+bool comfortLearnersReady = false;
+bool hasLastComfortMutation = false;
+unsigned long lastComfortMutationAt = 0;
+bool lastComfortTempUpdated = false;
+bool lastComfortHumUpdated = false;
+unsigned long lastAlertTmaxAt = 0, lastAlertTminAt = 0, lastAlertHmaxAt = 0;
+bool alertedTmax = false, alertedTmin = false, alertedHmax = false;
 bool sensorsOk = false, bmpOk = false;
 int sensorFailCount = 0;
+bool sensorUnavailableEventSent = false;
 unsigned long lastGoodSensorRead = 0;
 int comfortClass = COMFORT_OK;
 
-float centroid[3] = { 0, 0, 0 }, spread[3] = { 1, 1, 1 };
-int kmSamples = 0;
+// Dew point, heat index, comfort score, and mold risk are sensor-based estimates.
+static const float DEW_POINT_A = 17.62f;
+static const float DEW_POINT_B = 243.12f;
+static const float HEAT_INDEX_MIN_TEMP_C = 27.0f;
+static const float HEAT_INDEX_MIN_HUMIDITY = 40.0f;
+static const float COMFORT_OPPRESSIVE_DEW_C = 21.0f;
+static const unsigned long HUMIDITY_RISK_SUSTAINED_MS = 1800000UL;
+float dewPointC = NAN;
+float heatIndexC = NAN;
+float comfortScore = NAN;
+char moldRisk[8] = "LOW";
+unsigned long humidityAbove70Since = 0, humidityAbove80Since = 0;
+bool humidityAbove70Tracking = false, humidityAbove80Tracking = false;
+
+static const uint8_t ANOMALY_WINDOW_SIZE = 20;
+static const float ANOMALY_TEMP_Z_LIMIT = 2.5f;
+static const float ANOMALY_HUM_Z_LIMIT = 2.5f;
+static const float ANOMALY_PRESS_Z_LIMIT = 3.0f;
+static const float ANOMALY_TEMP_SD_FLOOR = 0.2f;
+static const float ANOMALY_HUM_SD_FLOOR = 1.0f;
+static const float ANOMALY_PRESS_SD_FLOOR = 0.3f;
+float anomalyTempWindow[ANOMALY_WINDOW_SIZE] = {};
+float anomalyHumWindow[ANOMALY_WINDOW_SIZE] = {};
+float anomalyPressWindow[ANOMALY_WINDOW_SIZE] = {};
+uint8_t anomalyWindowIndex = 0;
+uint8_t anomalyWindowCount = 0;
 bool anomalyActive = false;
 char anomalyMsg[48] = "";
 unsigned long lastAnomalyNoticeAt = 0;
@@ -386,6 +380,20 @@ bool wifiOn = false;
 bool wifiWant = false;
 bool telemetryServerStarted = false;
 unsigned long wifiRetryAt = 0;
+#if ENABLE_WEATHER
+enum WifiState { NET_WIFI_IDLE, NET_WIFI_CONNECTING, NET_WIFI_CONNECTED, NET_WIFI_BACKOFF };
+enum MqttState { NET_MQTT_IDLE, NET_MQTT_CONNECTING, NET_MQTT_CONNECTED, NET_MQTT_BACKOFF };
+WifiState wifiState = NET_WIFI_IDLE;
+MqttState mqttState = NET_MQTT_IDLE;
+uint8_t wifiFailureCount = 0;
+uint8_t mqttFailureCount = 0;
+unsigned long wifiAttemptStartedAt = 0;
+void setWifiState(WifiState nextState, const char* message);
+void setMqttState(MqttState nextState, const char* message);
+void startWifiConnection(unsigned long now);
+void handleWifiFailure(unsigned long now);
+void networkRestart(const char* reason);
+#endif
 volatile bool timeSynced = false;
 unsigned long lastWeatherUpdate = 0;
 const char* ntpServer = "pool.ntp.org";
@@ -396,9 +404,44 @@ float batteryPct = NAN;
 float micRms = 0.0f;
 float micNoiseFloor = 200.0f;
 
-float histTemp[60], histHum[60];
+// Sampling runs every >2 s in loop(), with about 150 ms of sensor averaging.
+// Keep one hour plus margin so pressure trends can use a genuine 1 h baseline.
+static const uint16_t HISTORY_CAPACITY = 1800;
+static const uint8_t TELEMETRY_HISTORY_COUNT = 60;
+float histTemp[HISTORY_CAPACITY], histHum[HISTORY_CAPACITY], histPress[HISTORY_CAPACITY];
+uint32_t histTimeMs[HISTORY_CAPACITY];
 int histIdx = 0;
 bool histFilled = false;
+unsigned long trendDataStartAt = 0, lastTrendSampleAt = 0;
+float tempTrendCPerHr = NAN, humTrendPerHr = NAN, pressTrendHpaPerHr = NAN;
+char pressureForecast[24] = "Learning";
+char temperaturePrediction[32] = "Temp estimate: --";
+char inferred[32] = "None";
+bool inferredWindowLatched = false, inferredCoolingLatched = false, inferredOccupancyLatched = false;
+unsigned long inferredWindowAt = 0, inferredCoolingAt = 0, inferredOccupancyAt = 0;
+static const unsigned long INFERENCE_COOLDOWN_MS = 600000UL;
+
+struct DeviceEvent {
+  uint32_t id;
+  uint32_t uptimeMs;
+  char source[16];
+  char message[96];
+};
+
+int historySampleCount() { return histFilled ? HISTORY_CAPACITY : histIdx; }
+int historyStartIndex(int count) {
+  const int total = historySampleCount();
+  if (count > total) count = total;
+  return (histIdx + HISTORY_CAPACITY - count) % HISTORY_CAPACITY;
+}
+int historyIndex(int start, int offset) { return (start + offset) % HISTORY_CAPACITY; }
+static const uint8_t DEVICE_EVENT_CAPACITY = 32;
+DeviceEvent deviceEvents[DEVICE_EVENT_CAPACITY] = {};
+uint32_t nextDeviceEventId = 1;
+char pairCode[9] = "";
+#if ENABLE_WEATHER
+void mqttPublishEvent(const DeviceEvent& event);
+#endif
 
 unsigned long timerDurationSec = TIMER_MIN_MINS * 60;
 unsigned long timerRemainingSec = TIMER_MIN_MINS * 60;
@@ -440,20 +483,55 @@ const char* MOOD_NAMES[MOOD_COUNT] = {
 };
 const char* comfortNames[] = { "COMFORTABLE", "TOO HOT", "TOO COLD", "TOO HUMID", "TOO DRY" };
 
-
-// ==================================================
-// 3. FUNCTIONS
-// ==================================================
-
 int ci(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 float cf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-// Comfortable indoor ranges per region. Edit these to retune comfort.
-// temperate: 18-26 C, 30-85 %
-// coastal:   20-30 C, 40-90 %
-// desert:    18-29 C, 15-65 %
-// mountain:  14-24 C, 25-80 %
-ClimateParams getClimateParams() {
+void writeDeviceEvent(const DeviceEvent& event) {
+  StaticJsonDocument<256> doc;
+  doc["type"] = "decision";
+  doc["id"] = event.id;
+  doc["uptimeMs"] = event.uptimeMs;
+  doc["source"] = event.source;
+  doc["msg"] = event.message;
+  serializeJson(doc, Serial);
+  Serial.println();
+}
+
+void emitEvent(const char* source, const char* message) {
+  uint32_t id = nextDeviceEventId++;
+  DeviceEvent& event = deviceEvents[(id - 1) % DEVICE_EVENT_CAPACITY];
+  event.id = id;
+  event.uptimeMs = millis();
+  strlcpy(event.source, source ? source : "System", sizeof(event.source));
+  strlcpy(event.message, message ? message : "", sizeof(event.message));
+  writeDeviceEvent(event);
+#if ENABLE_WEATHER
+  mqttPublishEvent(event);
+#endif
+}
+
+void sendDeviceEventHistory(uint32_t afterId) {
+  uint32_t oldestId = nextDeviceEventId > DEVICE_EVENT_CAPACITY ? nextDeviceEventId - DEVICE_EVENT_CAPACITY : 1;
+  for (uint32_t id = oldestId; id < nextDeviceEventId; ++id) {
+    if (id <= afterId) continue;
+    const DeviceEvent& event = deviceEvents[(id - 1) % DEVICE_EVENT_CAPACITY];
+    if (event.id == id) writeDeviceEvent(event);
+  }
+}
+
+void emitDecision(const char* message) {
+  const char* source = "System";
+  if (strncmp(message, "MiniAI", 6) == 0) source = "Mini-AI";
+  else if (strncmp(message, "Wake word", 9) == 0) source = "KWS";
+  else if (strncmp(message, "Anomaly", 7) == 0 || strstr(message, "changed quickly")) source = "Anomaly";
+  else if (strncmp(message, "Picked up", 9) == 0) source = "Lift";
+  else if (strncmp(message, "Mic", 3) == 0) source = "Mic";
+  else if (strncmp(message, "Over-petted", 11) == 0 || strncmp(message, "Long cuddle", 11) == 0) source = "Touch";
+  else if (strncmp(message, "Timer", 5) == 0 || strncmp(message, "Voice command", 13) == 0) source = "Timer";
+  emitEvent(source, message);
+}
+
+ClimateParams getDefaultClimateParams() {
   float tMin = 18.0f, tMax = 26.0f, hMin = 30.0f, hMax = 85.0f;
   if (climateZone == CLIMATE_COASTAL)      { tMin = 20.0f; tMax = 30.0f; hMin = 40.0f; hMax = 90.0f; }
   else if (climateZone == CLIMATE_DESERT)  { tMin = 18.0f; tMax = 29.0f; hMin = 15.0f; hMax = 65.0f; }
@@ -463,11 +541,210 @@ ClimateParams getClimateParams() {
   z.hMid = (hMin + hMax) * 0.5f; z.hHalf = (hMax - hMin) * 0.5f;
   return z;
 }
+
+ClimateParams getClimateParams() {
+  ClimateParams z = getDefaultClimateParams();
+  if (comfortLearnersReady && temperatureComfort.votes() >= 5) {
+    z.tMid = (temperatureComfort.lo() + temperatureComfort.hi()) * 0.5f;
+    z.tHalf = (temperatureComfort.hi() - temperatureComfort.lo()) * 0.5f;
+  }
+  if (comfortLearnersReady && humidityComfort.votes() >= 5) {
+    z.hMid = (humidityComfort.lo() + humidityComfort.hi()) * 0.5f;
+    z.hHalf = (humidityComfort.hi() - humidityComfort.lo()) * 0.5f;
+  }
+  return z;
+}
+
+void initializeComfortLearning() {
+  const ClimateParams defaults = getDefaultClimateParams();
+  const float defaultLoT = defaults.tMid - defaults.tHalf;
+  const float defaultHiT = defaults.tMid + defaults.tHalf;
+  const float defaultLoH = defaults.hMid - defaults.hHalf;
+  const float defaultHiH = defaults.hMid + defaults.hHalf;
+  temperatureComfort.init(defaultLoT, defaultHiT);
+  humidityComfort.init(defaultLoH, defaultHiH);
+  comfortLearnersReady = false;
+
+  if (prefs.begin("deskpal", true)) {
+    if (prefs.getBytesLength("comfort") == COMFORT_BLOB_SIZE) {
+      unsigned char blob[COMFORT_BLOB_SIZE];
+      ComfortLearner loadedTemperature(1.2f, 2.0f, 12.0f, 30.0f, 18.0f, 38.0f, 2.0f);
+      ComfortLearner loadedHumidity(0.15f, 12.0f, 15.0f, 60.0f, 50.0f, 95.0f, 15.0f);
+      const bool readOk = prefs.getBytes("comfort", blob, sizeof(blob)) == sizeof(blob);
+      const bool temperatureOk = readOk && loadedTemperature.deserialize(blob, ComfortLearner::SERIALIZED_SIZE);
+      const bool humidityOk = readOk && loadedHumidity.deserialize(
+          blob + ComfortLearner::SERIALIZED_SIZE, ComfortLearner::SERIALIZED_SIZE);
+      if (temperatureOk && humidityOk) {
+        temperatureComfort = loadedTemperature;
+        humidityComfort = loadedHumidity;
+        comfortLearnersReady = true;
+      }
+    }
+    prefs.end();
+  }
+  // A missing or invalid blob leaves both learners at the current zone defaults.
+  comfortLearnersReady = true;
+}
+
+bool saveComfortLearning() {
+  unsigned char blob[COMFORT_BLOB_SIZE];
+  if (!temperatureComfort.serialize(blob, ComfortLearner::SERIALIZED_SIZE) ||
+      !humidityComfort.serialize(blob + ComfortLearner::SERIALIZED_SIZE,
+                                 ComfortLearner::SERIALIZED_SIZE) ||
+      !prefs.begin("deskpal", false)) return false;
+  const size_t saved = prefs.putBytes("comfort", blob, sizeof(blob));
+  prefs.end();
+  return saved == sizeof(blob);
+}
+
+bool resetComfortLearning() {
+  const ClimateParams defaults = getDefaultClimateParams();
+  temperatureComfort.init(defaults.tMid - defaults.tHalf, defaults.tMid + defaults.tHalf);
+  humidityComfort.init(defaults.hMid - defaults.hHalf, defaults.hMid + defaults.hHalf);
+  lastComfortTempUpdated = false;
+  lastComfortHumUpdated = false;
+  return saveComfortLearning();
+}
 const char* climateName() {
   if (climateZone == CLIMATE_COASTAL) return "coastal";
   if (climateZone == CLIMATE_DESERT) return "desert";
   if (climateZone == CLIMATE_MOUNTAIN) return "mountain";
   return "temperate";
+}
+
+// Linear-regression trend is an estimate in units per hour. Actual sample
+// timestamps are used because the sensor cycle is nominally about 2.15 s,
+// but loop and I2C timing make the interval vary.
+float estimateSlopePerHour(const float* values, int count) {
+  if (count < 2) return NAN;
+  const int start = historyStartIndex(count);
+  const uint32_t baseMs = histTimeMs[start];
+  double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+  for (int i = 0; i < count; ++i) {
+    const int idx = historyIndex(start, i);
+    const double x = (uint32_t)(histTimeMs[idx] - baseMs) / 3600000.0;
+    const double y = values[idx];
+    sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
+  }
+  const double denominator = count * sumXX - sumX * sumX;
+  if (denominator <= 0.0) return NAN;
+  return (float)((count * sumXY - sumX * sumY) / denominator);
+}
+
+void updateTrendEstimates(unsigned long now) {
+  const int available = historySampleCount();
+  const int shortCount = min(available, 60);
+  tempTrendCPerHr = estimateSlopePerHour(histTemp, shortCount);
+  humTrendPerHr = estimateSlopePerHour(histHum, shortCount);
+  const bool hasHour = trendDataStartAt != 0 && now - trendDataStartAt >= 3600000UL &&
+                       available >= 1000 && (uint32_t)(histTimeMs[(histIdx + HISTORY_CAPACITY - 1) % HISTORY_CAPACITY] - histTimeMs[historyStartIndex(available)]) >= 3600000UL;
+  if (!hasHour) {
+    pressTrendHpaPerHr = NAN;
+    strlcpy(pressureForecast, "Learning", sizeof(pressureForecast));
+  } else {
+    pressTrendHpaPerHr = estimateSlopePerHour(histPress, available);
+    const float projected3h = pressTrendHpaPerHr * 3.0f;
+    if (projected3h <= -6.0f) strlcpy(pressureForecast, "Storm risk", sizeof(pressureForecast));
+    else if (projected3h <= -1.6f) strlcpy(pressureForecast, "Rain possible", sizeof(pressureForecast));
+    else if (projected3h >= 1.6f) strlcpy(pressureForecast, "Fair weather", sizeof(pressureForecast));
+    else strlcpy(pressureForecast, "No change", sizeof(pressureForecast));
+  }
+
+  // Time to cross the current comfort band is a short-term temperature estimate.
+  strlcpy(temperaturePrediction, "Temp estimate: --", sizeof(temperaturePrediction));
+  if (sensorsOk && isfinite(tempTrendCPerHr) && fabsf(tempTrendCPerHr) > 0.5f) {
+    const ClimateParams zone = getClimateParams();
+    const float tMin = zone.tMid - zone.tHalf, tMax = zone.tMid + zone.tHalf;
+    float minutes = -1.0f;
+    const char* direction = nullptr;
+    if (envTemp >= tMin && envTemp <= tMax && tempTrendCPerHr > 0.0f) {
+      minutes = (tMax - envTemp) / tempTrendCPerHr * 60.0f;
+      direction = "Hot";
+    } else if (envTemp >= tMin && envTemp <= tMax && tempTrendCPerHr < 0.0f) {
+      minutes = (envTemp - tMin) / -tempTrendCPerHr * 60.0f;
+      direction = "Cold";
+    }
+    if (minutes >= 0.0f && direction) {
+      if (minutes < 1.0f) minutes = 1.0f;
+      snprintf(temperaturePrediction, sizeof(temperaturePrediction), "%s estimate ~%d min", direction, (int)lroundf(minutes));
+    }
+  }
+}
+
+bool historyValueForWindow(const float* values, uint32_t now, uint32_t windowMs, float& value) {
+  const int count = historySampleCount();
+  if (count < 2) return false;
+  const int start = historyStartIndex(count);
+  uint32_t closestAge = UINT32_MAX;
+  int closest = -1;
+  for (int i = 0; i < count; ++i) {
+    const int idx = historyIndex(start, i);
+    const uint32_t age = now - histTimeMs[idx];
+    if (age >= windowMs && age < closestAge) { closestAge = age; closest = idx; }
+  }
+  if (closest < 0 || closestAge > windowMs + 15000UL) return false;
+  value = values[closest];
+  return isfinite(value);
+}
+
+void emitInferredEvent(const char* shortLabel, const char* eventMessage, unsigned long now,
+                       unsigned long& lastAt, bool& latched) {
+  latched = true;
+  if (lastAt != 0 && now - lastAt < INFERENCE_COOLDOWN_MS) return;
+  lastAt = now;
+  strlcpy(inferred, shortLabel, sizeof(inferred));
+  emitEvent("Inference", eventMessage);
+}
+
+void updateEventInference(unsigned long now) {
+  if (!sensorsOk || historySampleCount() < 2) return;
+  float temp3m, hum3m, temp10m, hum10m;
+  const bool have3m = historyValueForWindow(histTemp, now, 180000UL, temp3m) &&
+                      historyValueForWindow(histHum, now, 180000UL, hum3m);
+  const bool have10m = historyValueForWindow(histTemp, now, 600000UL, temp10m) &&
+                       historyValueForWindow(histHum, now, 600000UL, hum10m);
+
+#if ENABLE_WEATHER
+  const WeatherSnapshot outdoor = getWeatherSnapshot();
+  const bool outdoorValid = outdoor.ok && isfinite(outdoor.temperature) && outdoor.humidity >= 0 && outdoor.humidity <= 100;
+#else
+  const bool outdoorValid = false;
+#endif
+  bool windowLikely = false, windowRelaxed = false;
+#if ENABLE_WEATHER
+  if (have3m && outdoorValid) {
+    const float dt = envTemp - temp3m, dh = envHum - hum3m;
+    const bool towardOutdoor = fabsf(outdoor.temperature - envTemp) < fabsf(outdoor.temperature - temp3m) &&
+                               fabsf((float)outdoor.humidity - envHum) < fabsf((float)outdoor.humidity - hum3m);
+    windowLikely = fabsf(dt) >= 0.8f && fabsf(dh) >= 4.0f && towardOutdoor;
+    windowRelaxed = fabsf(dt) >= 0.5f && fabsf(dh) >= 2.0f && towardOutdoor;
+  }
+#endif
+  if (inferredWindowLatched && !windowRelaxed) inferredWindowLatched = false;
+  if (!inferredWindowLatched && windowLikely)
+    emitInferredEvent("Window/door likely", "Window or door likely opened", now, inferredWindowAt, inferredWindowLatched);
+
+  bool coolingLikely = false, coolingRelaxed = false;
+  if (have10m) {
+    const float dt = envTemp - temp10m, dh = envHum - hum10m;
+    coolingLikely = dt <= -1.0f && dh < 0.0f;
+    coolingRelaxed = dt <= -0.6f && dh < 0.0f;
+  }
+  if (inferredCoolingLatched && !coolingRelaxed) inferredCoolingLatched = false;
+  if (!inferredCoolingLatched && coolingLikely)
+    emitInferredEvent("Cooling likely on", "AC or cooling likely turned on", now, inferredCoolingAt, inferredCoolingLatched);
+
+  bool occupancyLikely = false, occupancyRelaxed = false;
+  const float micGate = micNoiseFloor * 2.5f + 250.0f;
+  const bool elevatedMic = micReady && !micMuted && micRms >= micGate;
+  if (have10m) {
+    const float dt = envTemp - temp10m, dh = envHum - hum10m;
+    occupancyLikely = dh >= 3.0f && dt >= 0.3f && elevatedMic;
+    occupancyRelaxed = dh >= 1.5f && dt >= 0.15f && elevatedMic;
+  }
+  if (inferredOccupancyLatched && !occupancyRelaxed) inferredOccupancyLatched = false;
+  if (!inferredOccupancyLatched && occupancyLikely)
+    emitInferredEvent("Person likely present", "Someone is likely in the room", now, inferredOccupancyAt, inferredOccupancyLatched);
 }
 
 void clampEyeTargets(Eye& e) {
@@ -532,6 +809,25 @@ void refreshCityUpper() {
   for (size_t i = 0; i < n; i++) cityUpper[i] = toupper(city[i]);
   cityUpper[n] = '\0';
 }
+
+bool validAlertLimits(float tmax, float tmin, float hmax) {
+  const bool validTempHigh = tmax == 0.0f || (tmax >= -20.0f && tmax <= 60.0f);
+  const bool validTempLow = tmin == 0.0f || (tmin >= -20.0f && tmin <= 60.0f);
+  const bool validHumidityHigh = hmax == 0.0f || (hmax >= 1.0f && hmax <= 100.0f);
+  return isfinite(tmax) && isfinite(tmin) && isfinite(hmax) && validTempHigh &&
+         validTempLow && validHumidityHigh &&
+         (tmax == 0.0f || tmin == 0.0f || tmin < tmax);
+}
+
+bool parseAlertFormValue(const String& text, float& value) {
+  if (text.isEmpty()) { value = 0.0f; return true; }
+  const char* begin = text.c_str();
+  char* end = nullptr;
+  value = strtof(begin, &end);
+  while (*end && isspace((unsigned char)*end)) ++end;
+  return end != begin && *end == '\0' && isfinite(value);
+}
+
 void loadConfig() {
   if (!prefs.begin("deskpal", true)) {
     Serial.println("Preferences unavailable; using safe defaults");
@@ -539,27 +835,100 @@ void loadConfig() {
   }
   wifiSsid = prefs.getString("ssid", "");
   wifiPass = prefs.getString("pass", "");
+  if (strlen(DESKPAL_WIFI_SSID) > 0) { wifiSsid = DESKPAL_WIFI_SSID; wifiPass = DESKPAL_WIFI_PASS; }
   apiKey = prefs.getString("apikey", "");
+  if (strlen(DESKPAL_WEATHER_API_KEY) > 0) apiKey = DESKPAL_WEATHER_API_KEY;
   city = prefs.getString("city", "");
   countryCode = prefs.getString("country", "");
-  tzString = prefs.getString("tz", "UTC0");
+  alertTmax = prefs.getFloat("alertTmax", ALERT_DEFAULT_TMAX_C);
+  alertTmin = prefs.getFloat("alertTmin", ALERT_DEFAULT_TMIN_C);
+  alertHmax = prefs.getFloat("alertHmax", ALERT_DEFAULT_HMAX_PCT);
+  if (!validAlertLimits(alertTmax, alertTmin, alertHmax)) {
+    alertTmax = ALERT_DEFAULT_TMAX_C;
+    alertTmin = ALERT_DEFAULT_TMIN_C;
+    alertHmax = ALERT_DEFAULT_HMAX_PCT;
+    Serial.println("Invalid stored alert limits; using defaults");
+  }
+  
+  tzString = prefs.getString("tz", "IST-5:30");
+  
+  // FIX: Overwrite old "UTC0" setting in flash memory with IST
+  if (tzString == "UTC0" || tzString == "UTC" || tzString.isEmpty()) {
+    tzString = "IST-5:30";
+    prefs.end();
+    if (prefs.begin("deskpal", false)) {
+      prefs.putString("tz", tzString);
+      prefs.end();
+    }
+  } else {
+    prefs.end();
+  }
+
   climateZone = prefs.getInt("climate", CLIMATE_TEMPERATE);
-  prefs.end();
+  tempOffsetC = prefs.getFloat("tempOffset", TEMP_OFFSET);
+  if (!isfinite(tempOffsetC) || tempOffsetC < -10.0f || tempOffsetC > 10.0f) tempOffsetC = TEMP_OFFSET;
+  
   if (climateZone < CLIMATE_TEMPERATE || climateZone > CLIMATE_MOUNTAIN) {
     climateZone = CLIMATE_TEMPERATE;
     Serial.println("Invalid stored climate; reset to temperate");
   }
   refreshCityUpper();
 }
-bool saveConfig(const String& s, const String& p, const String& ak, const String& cty, const String& ctry, const String& tz, int cl) {
+
+bool setTemperatureOffset(float offsetC) {
+  if (!isfinite(offsetC) || offsetC < -10.0f || offsetC > 10.0f) return false;
   if (!prefs.begin("deskpal", false)) return false;
-  bool ok = prefs.putString("ssid", s) > 0 && prefs.putString("pass", p) > 0 &&
-            prefs.putString("apikey", ak) > 0 && prefs.putString("city", cty) > 0 &&
-            prefs.putString("country", ctry) > 0 && prefs.putString("tz", tz) > 0 &&
-            prefs.putInt("climate", cl) > 0;
+  bool saved = prefs.putFloat("tempOffset", offsetC) > 0;
+  prefs.end();
+  if (!saved) return false;
+  tempOffsetC = offsetC;
+  envTemp = NAN;
+  histIdx = 0;
+  histFilled = false;
+  trendDataStartAt = lastTrendSampleAt = 0;
+  tempTrendCPerHr = humTrendPerHr = pressTrendHpaPerHr = NAN;
+  strlcpy(pressureForecast, "Learning", sizeof(pressureForecast));
+  strlcpy(temperaturePrediction, "Temp estimate: --", sizeof(temperaturePrediction));
+  char msg[64];
+  snprintf(msg, sizeof(msg), "Temperature correction set to %.1f C", tempOffsetC);
+  emitEvent("Calibration", msg);
+  return true;
+}
+
+bool setAlertLimits(float tmax, float tmin, float hmax) {
+  if (!validAlertLimits(tmax, tmin, hmax) || !prefs.begin("deskpal", false)) return false;
+  const bool saved = prefs.putFloat("alertTmax", tmax) > 0 &&
+                     prefs.putFloat("alertTmin", tmin) > 0 &&
+                     prefs.putFloat("alertHmax", hmax) > 0;
+  prefs.end();
+  if (!saved) return false;
+  alertTmax = tmax;
+  alertTmin = tmin;
+  alertHmax = hmax;
+  alertedTmax = alertedTmin = alertedHmax = false;
+  lastAlertTmaxAt = lastAlertTminAt = lastAlertHmaxAt = 0;
+  return true;
+}
+
+static bool putStr(const char* key, const String& value) {
+  return prefs.putString(key, value) > 0 || value.length() == 0;
+}
+
+bool saveConfig(const String& s, const String& p, const String& ak, const String& cty, const String& ctry, const String& tz, int cl,
+                float tmax, float tmin, float hmax) {
+  if (!prefs.begin("deskpal", false)) return false;
+  const String savedTimezone = tz.isEmpty() ? "IST-5:30" : tz;
+  bool ok = putStr("ssid", s) && putStr("pass", p) &&
+            putStr("apikey", ak) && putStr("city", cty) &&
+            putStr("country", ctry) && putStr("tz", savedTimezone) &&
+            prefs.putInt("climate", cl) > 0 &&
+            prefs.putFloat("alertTmax", tmax) > 0 &&
+            prefs.putFloat("alertTmin", tmin) > 0 &&
+            prefs.putFloat("alertHmax", hmax) > 0;
   prefs.end();
   return ok;
 }
+
 #if ENABLE_WEATHER
 String htmlEscape(const String& value) {
   String escaped; escaped.reserve(value.length() + 8);
@@ -581,8 +950,12 @@ void handleConfigRoot() {
   String sS = htmlEscape(prefs.getString("ssid", ""));
   String sC = htmlEscape(prefs.getString("city", ""));
   String sT = htmlEscape(prefs.getString("country", ""));
-  String sZ = htmlEscape(prefs.getString("tz", "UTC0"));
+  String sZ = htmlEscape(prefs.getString("tz", "IST-5:30")); 
+  
   int cl = prefs.getInt("climate", 0);
+  float tmax = alertTmax;
+  float tmin = alertTmin;
+  float hmax = alertHmax;
   prefs.end();
   String s0 = cl == 0 ? " selected" : "", s1 = cl == 1 ? " selected" : "";
   String s2 = cl == 2 ? " selected" : "", s3 = cl == 3 ? " selected" : "";
@@ -592,29 +965,38 @@ void handleConfigRoot() {
 body{font-family:sans-serif;max-width:420px;margin:30px auto;padding:24px;background:#0c1929;color:#e8f4fc;}
 h1{color:#5ba3f5;}input,select{width:100%;padding:10px;margin:6px 0;border:1px solid #2d4a6f;border-radius:6px;box-sizing:border-box;background:#1a2d47;color:#e8f4fc;}
 button{width:100%;padding:12px;background:#3498db;color:#fff;border:none;border-radius:6px;font-size:16px;cursor:pointer;margin-top:16px;}
-label{display:block;margin-top:12px;color:#8ab4e8;font-size:14px;}</style></head><body>
+label{display:block;margin-top:12px;color:#8ab4e8;font-size:14px;}small{display:block;color:#9bb5d3;margin:0 0 6px;}</style></head><body>
 <h1>DeskPal Setup</h1><form action="/save" method="POST">
+<p>Dashboard pairing code: <code>)rawliteral" + String(pairCode) + R"rawliteral(</code></p>
+<p>Dashboard access token (keep private): <code>)rawliteral" + String(telemetryToken) + R"rawliteral(</code></p>
 <label>WiFi SSID</label><input name="ssid" value=")rawliteral" + sS + R"rawliteral(">
 <label>WiFi Password</label><input name="pass" type="password">
-<label>OpenWeather API Key (leave blank to keep saved key)</label><input name="apikey" type="password" autocomplete="new-password">
+<label>OpenWeather API Key</label><input name="apikey" type="password" autocomplete="new-password">
 <label>City</label><input name="city" value=")rawliteral" + sC + R"rawliteral(">
 <label>Country Code (2 letters, optional)</label><input name="country" value=")rawliteral" + sT + R"rawliteral(">
-<label>Timezone (POSIX)</label><input name="tz" value=")rawliteral" + sZ + R"rawliteral(">
+<label>Timezone (POSIX, e.g., IST-5:30)</label><input name="tz" value=")rawliteral" + sZ + R"rawliteral(">
+<small>Use IST-5:30 for India.</small>
 <label>Climate zone</label><select name="climate">
 <option value="0")rawliteral" + s0 + R"rawliteral(>Temperate</option>
 <option value="1")rawliteral" + s1 + R"rawliteral(>Coastal / Mumbai</option>
 <option value="2")rawliteral" + s2 + R"rawliteral(>Desert / Rajasthan</option>
 <option value="3")rawliteral" + s3 + R"rawliteral(>Mountain / Kashmir</option>
 </select>
+<p>Alert limits (enter 0 to turn a rule off)</p>
+<label>Temperature high (C)</label><input name="alertTmax" type="number" min="-20" max="60" step="0.1" value=")rawliteral" + String(tmax, 1) + R"rawliteral(">
+<label>Temperature low (C)</label><input name="alertTmin" type="number" min="-20" max="60" step="0.1" value=")rawliteral" + String(tmin, 1) + R"rawliteral(">
+<label>Humidity high (%)</label><input name="alertHmax" type="number" min="0" max="100" step="1" value=")rawliteral" + String(hmax, 1) + R"rawliteral(">
 <button type="submit">Save &amp; Reboot</button></form>
-<form action="/reset" method="POST" onsubmit="return confirm('Erase all saved Wi-Fi, weather, and telemetry-token settings?')">
+<form action="/reset" method="POST" onsubmit="return confirm('Erase all saved settings?')">
 <button type="submit">Erase saved settings</button></form></body></html>)rawliteral";
   configServer.send(200, "text/html", html);
 }
+
 void handleConfigSave() {
   String ssid = configServer.arg("ssid"), pass = configServer.arg("pass");
   String key = configServer.arg("apikey"), cty = configServer.arg("city");
   String country = configServer.arg("country"), tz = configServer.arg("tz");
+  float tmax = alertTmax, tmin = alertTmin, hmax = alertHmax;
   if (ssid.isEmpty() || ssid.length() > 32 || pass.length() > 63 || key.length() > 128 ||
       cty.length() > 64 || tz.length() > 64 || !(country.isEmpty() || country.length() == 2)) {
     configServer.send(400, "text/plain", "Invalid configuration field length or country code"); return;
@@ -623,14 +1005,15 @@ void handleConfigSave() {
     if (!isalpha((unsigned char)country[i])) { configServer.send(400, "text/plain", "Country code must contain two letters"); return; }
     country[i] = toupper((unsigned char)country[i]);
   }
-  for (size_t i = 0; i < tz.length(); ++i) {
-    char ch = tz[i];
-    if (!(isalnum((unsigned char)ch) || ch == '+' || ch == '-' || ch == ':' || ch == ',' || ch == '_' || ch == '.')) {
-      configServer.send(400, "text/plain", "Timezone contains unsupported characters"); return;
-    }
-  }
   int cl = configServer.hasArg("climate") ? configServer.arg("climate").toInt() : CLIMATE_TEMPERATE;
   if (cl < CLIMATE_TEMPERATE || cl > CLIMATE_MOUNTAIN) { configServer.send(400, "text/plain", "Invalid climate zone"); return; }
+  if ((configServer.hasArg("alertTmax") && !parseAlertFormValue(configServer.arg("alertTmax"), tmax)) ||
+      (configServer.hasArg("alertTmin") && !parseAlertFormValue(configServer.arg("alertTmin"), tmin)) ||
+      (configServer.hasArg("alertHmax") && !parseAlertFormValue(configServer.arg("alertHmax"), hmax)) ||
+      !validAlertLimits(tmax, tmin, hmax)) {
+    configServer.send(400, "text/plain", "Alert limits must be 0 (off), temperature -20 to 60 C, humidity 1 to 100%, and low temperature must be below high temperature");
+    return;
+  }
   if (pass.isEmpty() || key.isEmpty()) {
     prefs.begin("deskpal", true);
     if (pass.isEmpty()) pass = prefs.getString("pass", "");
@@ -638,13 +1021,15 @@ void handleConfigSave() {
     prefs.end();
   }
   if (pass.length() > 0 && pass.length() < 8) { configServer.send(400, "text/plain", "Wi-Fi password must be empty or at least 8 characters"); return; }
-  if (!saveConfig(ssid, pass, key, cty, country, tz.isEmpty() ? "UTC0" : tz, cl)) {
+  
+  if (!saveConfig(ssid, pass, key, cty, country, tz.isEmpty() ? "IST-5:30" : tz, cl, tmax, tmin, hmax)) {
     configServer.send(500, "text/plain", "Could not save configuration"); return;
   }
   configServer.send(200, "text/html", "<html><body style='font-family:sans-serif;background:#0c1929;color:#e8f4fc;padding:40px;'><h2>Saved!</h2><p>Rebooting...</p></body></html>");
   delay(1500);
   ESP.restart();
 }
+
 void handleConfigReset() {
   if (!prefs.begin("deskpal", false)) { configServer.send(500, "text/plain", "Could not open settings"); return; }
   bool ok = prefs.clear(); prefs.end();
@@ -652,6 +1037,7 @@ void handleConfigReset() {
   configServer.send(200, "text/html", "<html><body><h2>Settings erased</h2><p>Rebooting...</p></body></html>");
   delay(500); ESP.restart();
 }
+
 void startConfigPortal() {
   inConfigMode = true;
   WiFi.mode(WIFI_AP);
@@ -664,7 +1050,28 @@ void startConfigPortal() {
   configServer.on("/", handleConfigRoot);
   configServer.on("/save", HTTP_POST, handleConfigSave);
   configServer.on("/reset", HTTP_POST, handleConfigReset);
+  const char* headerNames[] = { "X-DeskPal-Token" };
+  configServer.collectHeaders(headerNames, 1);
+  configServer.on("/api/telemetry", HTTP_GET, sendTelemetryApi);
+  configServer.on("/api/telemetry", HTTP_OPTIONS, handleCorsOptions);
+  configServer.on("/api/events", HTTP_GET, sendEventsApi);
+  configServer.on("/api/events", HTTP_OPTIONS, handleCorsOptions);
+  configServer.on("/api/wifi", HTTP_POST, handleWifiSaveApi);
+  configServer.on("/api/wifi", HTTP_OPTIONS, handleCorsOptions);
+  configServer.on("/api/timer", HTTP_POST, handleTimerApi);
+  configServer.on("/api/timer", HTTP_OPTIONS, handleCorsOptions);
+  configServer.on("/api/calibration", HTTP_POST, handleCalibrationApi);
+  configServer.on("/api/calibration", HTTP_OPTIONS, handleCorsOptions);
+  configServer.on("/api/alerts", HTTP_POST, handleAlertsApi);
+  configServer.on("/api/alerts", HTTP_OPTIONS, handleCorsOptions);
+  configServer.on("/api/comfort", HTTP_POST, handleComfortApi);
+  configServer.on("/api/comfort", HTTP_OPTIONS, handleCorsOptions);
+  configServer.onNotFound([]() {
+    configServer.sendHeader("Access-Control-Allow-Origin", DESKPAL_CORS_ORIGIN);
+    configServer.send(404, "application/json", "{\"error\":\"not found\"}");
+  });
   configServer.begin();
+  telemetryServerStarted = true;
   display.clearDisplay(); display.setFont(NULL);
   display.setTextColor(OLED_WHITE); display.setCursor(0, 0);
   display.print("Config mode\n\nConnect to:\n");
@@ -717,7 +1124,155 @@ void buzzGrumble(){ BuzzerStep s[] = {{150, 0}}; queueBuzz(s, 1); }
 void buzzScared() { BuzzerStep s[] = {{30, 40}, {30, 40}, {30, 0}}; queueBuzz(s, 3); }
 void buzzBoot()   { BuzzerStep s[] = {{60, 60}, {60, 60}, {120, 0}}; queueBuzz(s, 3); }
 
-// Classify only when a measured value crosses the selected comfort band.
+bool recordComfortVote(bool humidity, ComfortLearner::Label label) {
+  if (!comfortLearnersReady || !sensorsOk || !isfinite(envTemp) || !isfinite(envHum) ||
+      label < ComfortLearner::HOT || label > ComfortLearner::PERFECT) return false;
+  const unsigned long now = millis();
+  if (hasLastComfortMutation && now - lastComfortMutationAt < 10000UL) return false;
+
+  const bool updateTemperature = !humidity || label == ComfortLearner::PERFECT;
+  const bool updateHumidity = humidity || label == ComfortLearner::PERFECT;
+  const bool temperatureVoted = updateTemperature && temperatureComfort.vote(envTemp, label);
+  const bool humidityVoted = updateHumidity && humidityComfort.vote(envHum, label);
+  if ((updateTemperature && !temperatureVoted) || (updateHumidity && !humidityVoted)) {
+    if (temperatureVoted) temperatureComfort.undoLast();
+    if (humidityVoted) humidityComfort.undoLast();
+    return false;
+  }
+  if (!saveComfortLearning()) {
+    if (temperatureVoted) temperatureComfort.undoLast();
+    if (humidityVoted) humidityComfort.undoLast();
+    return false;
+  }
+
+  hasLastComfortMutation = true;
+  lastComfortMutationAt = now;
+  lastComfortTempUpdated = updateTemperature;
+  lastComfortHumUpdated = updateHumidity;
+  manualMood = MOOD_HAPPY;
+  manualMoodUntil = now + 2000UL;
+  buzzTap();
+  char message[96];
+  snprintf(message, sizeof(message), "Learned: %.1f-%.1f C (%lu votes)",
+           temperatureComfort.lo(), temperatureComfort.hi(),
+           (unsigned long)(temperatureComfort.votes() + humidityComfort.votes()));
+  emitEvent("Comfort", message);
+  return true;
+}
+
+enum ComfortCommandResult {
+  COMFORT_COMMAND_INVALID,
+  COMFORT_COMMAND_REJECTED,
+  COMFORT_COMMAND_OK
+};
+
+bool undoComfortLearning() {
+  const unsigned long now = millis();
+  if (hasLastComfortMutation && now - lastComfortMutationAt < 10000UL) return false;
+  if (!lastComfortTempUpdated && !lastComfortHumUpdated) return false;
+
+  const ComfortLearner oldTemperature = temperatureComfort;
+  const ComfortLearner oldHumidity = humidityComfort;
+  const bool temperatureUndone =
+      !lastComfortTempUpdated || temperatureComfort.undoLast();
+  const bool humidityUndone =
+      !lastComfortHumUpdated || humidityComfort.undoLast();
+  if (!temperatureUndone || !humidityUndone || !saveComfortLearning()) {
+    temperatureComfort = oldTemperature;
+    humidityComfort = oldHumidity;
+    return false;
+  }
+
+  hasLastComfortMutation = true;
+  lastComfortMutationAt = now;
+  lastComfortTempUpdated = false;
+  lastComfortHumUpdated = false;
+  emitEvent("Comfort", "Previous comfort vote undone");
+  return true;
+}
+
+int processComfortCommand(JsonObject request) {
+  if (!request["cmd"].is<const char*>()) return COMFORT_COMMAND_INVALID;
+  const char* command = request["cmd"].as<const char*>();
+
+  if (strcmp(command, "vote") == 0) {
+    if (request.size() != 3 || !request["label"].is<const char*>() ||
+        !request["kind"].is<const char*>()) return COMFORT_COMMAND_INVALID;
+
+    const char* labelText = request["label"].as<const char*>();
+    const char* kindText = request["kind"].as<const char*>();
+    if (strlen(labelText) > 7 || strlen(kindText) > 4)
+      return COMFORT_COMMAND_INVALID;
+
+    ComfortLearner::Label label;
+    if (strcmp(labelText, "hot") == 0) label = ComfortLearner::HOT;
+    else if (strcmp(labelText, "cold") == 0) label = ComfortLearner::COLD;
+    else if (strcmp(labelText, "perfect") == 0) label = ComfortLearner::PERFECT;
+    else return COMFORT_COMMAND_INVALID;
+
+    bool humidity;
+    if (strcmp(kindText, "temp") == 0) humidity = false;
+    else if (strcmp(kindText, "hum") == 0) humidity = true;
+    else return COMFORT_COMMAND_INVALID;
+
+    return recordComfortVote(humidity, label)
+        ? COMFORT_COMMAND_OK : COMFORT_COMMAND_REJECTED;
+  }
+
+  if (strcmp(command, "undo") == 0) {
+    if (request.size() != 1) return COMFORT_COMMAND_INVALID;
+    return undoComfortLearning() ? COMFORT_COMMAND_OK : COMFORT_COMMAND_REJECTED;
+  }
+
+  if (strcmp(command, "reset_comfort") == 0) {
+    if (request.size() != 1) return COMFORT_COMMAND_INVALID;
+    const unsigned long now = millis();
+    if (hasLastComfortMutation && now - lastComfortMutationAt < 10000UL)
+      return COMFORT_COMMAND_REJECTED;
+    if (!resetComfortLearning()) return COMFORT_COMMAND_REJECTED;
+
+    hasLastComfortMutation = true;
+    lastComfortMutationAt = now;
+    lastComfortTempUpdated = false;
+    lastComfortHumUpdated = false;
+    emitEvent("Comfort", "Comfort learning reset");
+    return COMFORT_COMMAND_OK;
+  }
+
+  return COMFORT_COMMAND_INVALID;
+}
+
+void emitThresholdAlert(const char* message, unsigned long now, unsigned long& lastAt, bool& alerted) {
+  if (alerted && now - lastAt < ALERT_REPEAT_MS) return;
+  lastAt = now;
+  alerted = true;
+  emitEvent("Alert", message);
+  buzzAlert();
+}
+
+void checkAlertThresholds() {
+  if (!sensorsOk || buzzQueueIdx >= 0) return;
+  const unsigned long now = millis();
+  char message[96];
+  if (alertTmax != 0.0f && envTemp >= alertTmax &&
+      (!alertedTmax || now - lastAlertTmaxAt >= ALERT_REPEAT_MS)) {
+    snprintf(message, sizeof(message), "Temperature above limit: %.1f C (limit %.1f C)", envTemp, alertTmax);
+    emitThresholdAlert(message, now, lastAlertTmaxAt, alertedTmax);
+    return;
+  }
+  if (alertTmin != 0.0f && envTemp <= alertTmin &&
+      (!alertedTmin || now - lastAlertTminAt >= ALERT_REPEAT_MS)) {
+    snprintf(message, sizeof(message), "Temperature below limit: %.1f C (limit %.1f C)", envTemp, alertTmin);
+    emitThresholdAlert(message, now, lastAlertTminAt, alertedTmin);
+    return;
+  }
+  if (alertHmax != 0.0f && envHum >= alertHmax &&
+      (!alertedHmax || now - lastAlertHmaxAt >= ALERT_REPEAT_MS)) {
+    snprintf(message, sizeof(message), "Humidity above limit: %d%% (limit %.0f%%)", (int)envHum, alertHmax);
+    emitThresholdAlert(message, now, lastAlertHmaxAt, alertedHmax);
+  }
+}
+
 int classifyComfort(float T, float H) {
   ClimateParams z = getClimateParams();
   const float tMin = z.tMid - z.tHalf, tMax = z.tMid + z.tHalf;
@@ -729,40 +1284,58 @@ int classifyComfort(float T, float H) {
   return COMFORT_OK;
 }
 void updateOnlineAnomalyModel(float t, float h, float p) {
-  float f[3] = { t, h, p };
-  if (kmSamples == 0) { centroid[0] = t; centroid[1] = h; centroid[2] = p; }
-  if (kmSamples < 60) {
-    for (int i = 0; i < 3; i++) {
-      float d = fabsf(f[i] - centroid[i]);
-      centroid[i] += 0.05f * (f[i] - centroid[i]);
-      spread[i] += 0.08f * (d - spread[i]);
-    }
-    kmSamples++;
-    return;
-  }
-  float dT = fabsf(f[0] - centroid[0]);
-  float dH = fabsf(f[1] - centroid[1]);
-  float dP = fabsf(f[2] - centroid[2]);
   anomalyMsg[0] = '\0';
-  const float tLimit = fmaxf(2.5f, spread[0] * 5.0f);
-  const float hLimit = fmaxf(10.0f, spread[1] * 5.0f);
-  const float pLimit = fmaxf(5.0f, spread[2] * 5.0f);
-  if (dT > tLimit) strlcpy(anomalyMsg, "Room temperature changed quickly", sizeof(anomalyMsg));
-  else if (dH > hLimit) strlcpy(anomalyMsg, "Room humidity changed quickly", sizeof(anomalyMsg));
-  else if (dP > pLimit && millis() > liftSuppressUntil) strlcpy(anomalyMsg, "Room pressure changed quickly", sizeof(anomalyMsg));
-  if (anomalyMsg[0] != '\0' && (lastAnomalyNoticeAt == 0 || millis() - lastAnomalyNoticeAt >= 60000UL)) {
-    anomalyUntil = millis() + 5000UL;
-    lastAnomalyNoticeAt = millis();
-    Serial.print("{\"type\":\"decision\",\"msg\":\""); Serial.print(anomalyMsg); Serial.println("\"}");
-  } else {
-    anomalyMsg[0] = '\0';
+
+  // Compare each new reading with the previous 20 readings, then replace the
+  // oldest entry so a sustained change gradually becomes the new baseline.
+  if (anomalyWindowCount == ANOMALY_WINDOW_SIZE) {
+    float sums[3] = { 0.0f, 0.0f, 0.0f };
+    for (uint8_t i = 0; i < ANOMALY_WINDOW_SIZE; ++i) {
+      sums[0] += anomalyTempWindow[i];
+      sums[1] += anomalyHumWindow[i];
+      sums[2] += anomalyPressWindow[i];
+    }
+    const float means[3] = {
+      sums[0] / ANOMALY_WINDOW_SIZE,
+      sums[1] / ANOMALY_WINDOW_SIZE,
+      sums[2] / ANOMALY_WINDOW_SIZE
+    };
+    float squaredDiffs[3] = { 0.0f, 0.0f, 0.0f };
+    for (uint8_t i = 0; i < ANOMALY_WINDOW_SIZE; ++i) {
+      const float dt = anomalyTempWindow[i] - means[0];
+      const float dh = anomalyHumWindow[i] - means[1];
+      const float dp = anomalyPressWindow[i] - means[2];
+      squaredDiffs[0] += dt * dt;
+      squaredDiffs[1] += dh * dh;
+      squaredDiffs[2] += dp * dp;
+    }
+    const float sdTemp = fmaxf(sqrtf(squaredDiffs[0] / ANOMALY_WINDOW_SIZE), ANOMALY_TEMP_SD_FLOOR);
+    const float sdHum = fmaxf(sqrtf(squaredDiffs[1] / ANOMALY_WINDOW_SIZE), ANOMALY_HUM_SD_FLOOR);
+    const float sdPress = fmaxf(sqrtf(squaredDiffs[2] / ANOMALY_WINDOW_SIZE), ANOMALY_PRESS_SD_FLOOR);
+    const float zTemp = fabsf(t - means[0]) / sdTemp;
+    const float zHum = fabsf(h - means[1]) / sdHum;
+    const float zPress = fabsf(p - means[2]) / sdPress;
+
+    if (zTemp > ANOMALY_TEMP_Z_LIMIT) strlcpy(anomalyMsg, "Room temperature changed quickly", sizeof(anomalyMsg));
+    else if (zHum > ANOMALY_HUM_Z_LIMIT) strlcpy(anomalyMsg, "Room humidity changed quickly", sizeof(anomalyMsg));
+    else if (zPress > ANOMALY_PRESS_Z_LIMIT && millis() > liftSuppressUntil)
+      strlcpy(anomalyMsg, "Room pressure changed quickly", sizeof(anomalyMsg));
+
+    const unsigned long now = millis();
+    if (anomalyMsg[0] != '\0' && (lastAnomalyNoticeAt == 0 || now - lastAnomalyNoticeAt >= 60000UL)) {
+      anomalyUntil = now + 5000UL;
+      lastAnomalyNoticeAt = now;
+      emitDecision(anomalyMsg);
+    } else {
+      anomalyMsg[0] = '\0';
+    }
   }
-  if (anomalyMsg[0] == '\0') {
-    for (int i = 0; i < 3; i++) centroid[i] += 0.01f * (f[i] - centroid[i]);
-    spread[0] += 0.02f * (dT - spread[0]);
-    spread[1] += 0.02f * (dH - spread[1]);
-    spread[2] += 0.02f * (dP - spread[2]);
-  }
+
+  anomalyTempWindow[anomalyWindowIndex] = t;
+  anomalyHumWindow[anomalyWindowIndex] = h;
+  anomalyPressWindow[anomalyWindowIndex] = p;
+  anomalyWindowIndex = (anomalyWindowIndex + 1) % ANOMALY_WINDOW_SIZE;
+  if (anomalyWindowCount < ANOMALY_WINDOW_SIZE) ++anomalyWindowCount;
 }
 
 bool isRelativelyCold() {
@@ -776,24 +1349,92 @@ void generateInsights() {
     strlcpy(insightAction, "Sensor data unavailable", sizeof(insightAction));
     return;
   }
+  if (strcmp(moldRisk, "HIGH") == 0) {
+    strlcpy(insightTitle, "HIGH ROOM RISK", sizeof(insightTitle));
+    strlcpy(insightAction, envTemp - dewPointC <= 2.0f ? "Condensation likely" : "Mold growth likely",
+            sizeof(insightAction));
+    return;
+  }
+  if (strcmp(moldRisk, "MEDIUM") == 0) {
+    strlcpy(insightTitle, "MOLD RISK ESTIMATE", sizeof(insightTitle));
+    strlcpy(insightAction, "Mold growth likely", sizeof(insightAction));
+    return;
+  }
   ClimateParams z = getClimateParams();
   float tMin = z.tMid - z.tHalf, tMax = z.tMid + z.tHalf;
   if (envTemp > tMax) {
     strlcpy(insightTitle, "ROOM IS WARM", sizeof(insightTitle));
-    strlcpy(insightAction, "Ventilate or cool the room", sizeof(insightAction));
+    strlcpy(insightAction, "Ventilate or cool", sizeof(insightAction));
   } else if (envTemp < tMin) {
     strlcpy(insightTitle, "ROOM IS COOL", sizeof(insightTitle));
-    strlcpy(insightAction, "Add warmth if you need it", sizeof(insightAction));
+    strlcpy(insightAction, "Add warmth if needed", sizeof(insightAction));
   } else if (envHum > z.hMid + z.hHalf) {
     strlcpy(insightTitle, "HUMIDITY IS HIGH", sizeof(insightTitle));
     strlcpy(insightAction, "Ventilate the room", sizeof(insightAction));
   } else if (envHum < z.hMid - z.hHalf) {
     strlcpy(insightTitle, "AIR IS DRY", sizeof(insightTitle));
-    strlcpy(insightAction, "Consider adding humidity", sizeof(insightAction));
+    strlcpy(insightAction, "Add some humidity", sizeof(insightAction));
   } else {
-    strlcpy(insightTitle, "ROOM IS COMFORTABLE", sizeof(insightTitle));
-    strlcpy(insightAction, "Temp and humidity are in range", sizeof(insightAction));
+    strlcpy(insightTitle, "ROOM COMFORTABLE", sizeof(insightTitle));
+    strlcpy(insightAction, "Temp and humidity OK", sizeof(insightAction));
   }
+}
+void computeRoomAnalysis() {
+  if (!sensorsOk || !isfinite(envTemp) || !isfinite(envHum)) {
+    dewPointC = heatIndexC = comfortScore = NAN;
+    strlcpy(moldRisk, "LOW", sizeof(moldRisk));
+    humidityAbove70Tracking = humidityAbove80Tracking = false;
+    return;
+  }
+
+  // Magnus dew point is an estimate; clamp RH away from zero for the logarithm.
+  const float rh = cf(envHum, 1.0f, 100.0f);
+  const float gamma = logf(rh / 100.0f) + DEW_POINT_A * envTemp / (DEW_POINT_B + envTemp);
+  dewPointC = DEW_POINT_B * gamma / (DEW_POINT_A - gamma);
+
+  // Rothfusz regression heat index is an estimate and is used in its hot/humid range.
+  if (envTemp >= HEAT_INDEX_MIN_TEMP_C && rh >= HEAT_INDEX_MIN_HUMIDITY) {
+    const float f = envTemp * 9.0f / 5.0f + 32.0f;
+    const float r = rh;
+    float hiF = -42.379f + 2.04901523f * f + 10.14333127f * r - 0.22475541f * f * r
+                - 0.00683783f * f * f - 0.05481717f * r * r
+                + 0.00122874f * f * f * r + 0.00085282f * f * r * r
+                - 0.00000199f * f * f * r * r;
+    if (r < 13.0f && f >= 80.0f && f <= 112.0f)
+      hiF -= ((13.0f - r) / 4.0f) * sqrtf(fmaxf(0.0f, (17.0f - fabsf(f - 95.0f)) / 17.0f));
+    else if (r > 85.0f && f >= 80.0f && f <= 87.0f)
+      hiF += ((r - 85.0f) / 10.0f) * ((87.0f - f) / 5.0f);
+    heatIndexC = (hiF - 32.0f) * 5.0f / 9.0f;
+  } else {
+    heatIndexC = envTemp;
+  }
+
+  const ClimateParams zone = getClimateParams();
+  const float tMin = zone.tMid - zone.tHalf, tMax = zone.tMid + zone.tHalf;
+  const float hMin = zone.hMid - zone.hHalf, hMax = zone.hMid + zone.hHalf;
+  const float tempDistance = envTemp < tMin ? tMin - envTemp : (envTemp > tMax ? envTemp - tMax : 0.0f);
+  const float humDistance = rh < hMin ? hMin - rh : (rh > hMax ? rh - hMax : 0.0f);
+  const float tempPart = cf(100.0f - 10.0f * tempDistance, 0.0f, 100.0f);
+  const float humidityPart = cf(100.0f - 1.5f * humDistance, 0.0f, 100.0f);
+  const float dewPenalty = dewPointC >= COMFORT_OPPRESSIVE_DEW_C
+      ? cf(25.0f + (dewPointC - COMFORT_OPPRESSIVE_DEW_C) * 10.0f, 25.0f, 100.0f)
+      : 0.0f;
+  comfortScore = roundf(0.55f * tempPart + 0.25f * humidityPart + 0.20f * (100.0f - dewPenalty));
+
+  // Risk levels are estimates based on sustained RH timers and near-saturation dew point.
+  const unsigned long now = millis();
+  if (rh > 70.0f) {
+    if (!humidityAbove70Tracking) { humidityAbove70Since = now; humidityAbove70Tracking = true; }
+  } else humidityAbove70Tracking = false;
+  if (rh > 80.0f) {
+    if (!humidityAbove80Tracking) { humidityAbove80Since = now; humidityAbove80Tracking = true; }
+  } else humidityAbove80Tracking = false;
+
+  const bool sustained70 = humidityAbove70Tracking && now - humidityAbove70Since >= HUMIDITY_RISK_SUSTAINED_MS;
+  const bool sustained80 = humidityAbove80Tracking && now - humidityAbove80Since >= HUMIDITY_RISK_SUSTAINED_MS;
+  if (sustained80 || envTemp - dewPointC <= 2.0f) strlcpy(moldRisk, "HIGH", sizeof(moldRisk));
+  else if (sustained70) strlcpy(moldRisk, "MEDIUM", sizeof(moldRisk));
+  else strlcpy(moldRisk, "LOW", sizeof(moldRisk));
 }
 void runInference() {
   unsigned long t0 = micros();
@@ -830,7 +1471,11 @@ void readSensors() {
       sensorFailCount = 0;
       i2cBusRecovery();
     }
-    if (millis() - lastGoodSensorRead > SENSOR_GRACE_MS) sensorsOk = false;
+    if (millis() - lastGoodSensorRead > SENSOR_GRACE_MS) {
+      sensorsOk = false;
+      computeRoomAnalysis();
+      if (!sensorUnavailableEventSent) { sensorUnavailableEventSent = true; emitEvent("Sensor", "Room sensor data unavailable"); }
+    }
     return;
   }
   float tSum = 0, hSum = 0, pSum = 0;
@@ -847,10 +1492,15 @@ void readSensors() {
   if (validReadings == 0) {
     sensorFailCount++;
     if (sensorFailCount >= SENSOR_RECOVERY_FAILS) { i2cBusRecovery(); sensorFailCount = 0; }
-    if (millis() - lastGoodSensorRead > SENSOR_GRACE_MS) sensorsOk = false;
+    if (millis() - lastGoodSensorRead > SENSOR_GRACE_MS) {
+      sensorsOk = false;
+      computeRoomAnalysis();
+      if (!sensorUnavailableEventSent) { sensorUnavailableEventSent = true; emitEvent("Sensor", "Room sensor data unavailable"); }
+    }
     return;
   }
-  float t = (tSum / validReadings) + TEMP_OFFSET;
+  envTempRaw = tSum / validReadings;
+  float t = envTempRaw + tempOffsetC;
   float h = hSum / validReadings;
   float p = pSum / validReadings;
   if (!isnan(h)) h = cf(h, 0.0f, 100.0f);
@@ -864,12 +1514,28 @@ void readSensors() {
   lastGoodSensorRead = millis();
   envAlt = bme.readAltitude(1013.25);
   sensorsOk = true;
+  computeRoomAnalysis();
   runInference();
   anomalyActive = (millis() < anomalyUntil);
+  const unsigned long sampleNow = millis();
+  if (lastTrendSampleAt != 0 && sampleNow - lastTrendSampleAt > 10000UL) {
+    histIdx = 0;
+    histFilled = false;
+  }
+  if (lastTrendSampleAt == 0 || sampleNow - lastTrendSampleAt > 10000UL) trendDataStartAt = sampleNow;
+  lastTrendSampleAt = sampleNow;
   histTemp[histIdx] = envTemp;
   histHum[histIdx] = envHum;
-  histIdx = (histIdx + 1) % 60;
+  histPress[histIdx] = envPress;
+  histTimeMs[histIdx] = (uint32_t)sampleNow;
+  histIdx = (histIdx + 1) % HISTORY_CAPACITY;
   if (histIdx == 0) histFilled = true;
+  updateTrendEstimates(sampleNow);
+  updateEventInference(sampleNow);
+  if (sensorUnavailableEventSent) {
+    sensorUnavailableEventSent = false;
+    emitEvent("Sensor", "Room sensor data recovered");
+  }
   if (millis() - lastPressSample > 60000) { pressHourAgo = envPress; lastPressSample = millis(); }
 }
 void liftCheck() {
@@ -883,7 +1549,7 @@ void liftCheck() {
   if (now - press2sTime >= 2000) {
     if (press2sAgo - p >= LIFT_THRESHOLD && now > scaredUntil + 5000) {
       scaredUntil = now + 4000; liftSuppressUntil = now + 8000; lastInteraction = now; buzzScared();
-      Serial.println("{\"type\":\"decision\",\"msg\":\"Picked up - scared\"}");
+      emitDecision("Picked up - scared");
     }
     press2sAgo = p; press2sTime = now;
   }
@@ -914,9 +1580,6 @@ void computeMood() {
       ClimateParams localComfort = getClimateParams();
       const float roomMin = localComfort.tMid - localComfort.tHalf;
       const float roomMax = localComfort.tMid + localComfort.tHalf;
-      // Compare the room to the configured city's current outdoor temperature.
-      // The pet reacts only when both the outdoor condition and room reading
-      // point to a real hot/cold situation, not just a normal indoor/outdoor gap.
       if (weather.temperature > roomMax && envTemp > roomMax) m = MOOD_ANGRY;
       else if (weather.temperature < roomMin && envTemp < roomMin) m = MOOD_COLD;
       else if (weather.temperature > roomMax && envTemp <= roomMax) m = MOOD_HAPPY;
@@ -928,6 +1591,13 @@ void computeMood() {
 #endif
   }
   currentMood = m;
+  static int lastLoggedMood = -1;
+  if (m != lastLoggedMood) {
+    char moodMessage[48];
+    snprintf(moodMessage, sizeof(moodMessage), "Mood changed to %s", MOOD_NAMES[m]);
+    emitEvent("Mood", moodMessage);
+    lastLoggedMood = m;
+  }
   switch (m) {
     case MOOD_SCARED: pupilScale = 0.5f; break;
     case MOOD_LOVE: pupilScale = 1.25f; break;
@@ -936,28 +1606,53 @@ void computeMood() {
   }
 }
 
+// MiniAI uses a weighted decision matrix: each normalized signal is multiplied
+// by its named weight, then the highest-scoring candidate is selected.
+static const float MINIAI_HOT_C = 27.0f;
+static const float MINIAI_COLD_C = 22.0f;
+static const float MINIAI_TEMP_SCALE_C = 3.0f;
+static const float MINIAI_HUM_HIGH = 75.0f;
+static const float MINIAI_HUM_LOW = 30.0f;
+static const float MINIAI_HUM_SCALE = 15.0f;
+static const float MINIAI_NOISE_SCALE = 3.0f;
+static const float MINIAI_NOISE_GATE = 2.0f;
+static const float MINIAI_QUIET_CEILING = 200.0f;
+static const float MINIAI_PRESSURE_SCALE = 2.0f;
+static const float MINIAI_MIN_SCORE = 0.15f;
+static const float MINIAI_W_TEMP = 1.0f;
+static const float MINIAI_W_HUM = 1.0f;
+static const float MINIAI_W_NOISE = 1.0f;
+static const float MINIAI_W_PRESSURE = 0.9f;
+static const float MINIAI_W_TIMER = 1.0f;
+static const float MINIAI_W_ANOMALY = 1.0f;
+static const unsigned long MINIAI_MIN_INTERVAL_MS = 30000UL;
 
-// --- Inlined from DeskPalAudio.h ---
-
-// Microphone capture, wake-word contract, and voice command behavior.
 void triggerMiniAI() {
-  isAiResponding = true; aiResponseStart = millis(); currentPage = PAGE_KWS;
+  static unsigned long lastRunAt = 0;
+  static bool hasRun = false;
+  const unsigned long now = millis();
+  if (hasRun && now - lastRunAt < MINIAI_MIN_INTERVAL_MS) return;
+  const unsigned long startTime = micros();
+  hasRun = true;
+  lastRunAt = now;
+  isAiResponding = true; aiResponseStart = now;
   if (!sensorsOk && !timerRunning && !anomalyActive) {
     strlcpy(aiResponse, "Room sensor unavailable; check connections.", sizeof(aiResponse));
+    Serial.print("MiniAI us="); Serial.println(micros() - startTime);
     return;
   }
-  float sHot = sensorsOk && !isnan(envTemp) ? cf((envTemp - 27.0f) / 3.0f, 0, 1) : 0.0f;
-  float sCold = sensorsOk && !isnan(envTemp) ? cf((22.0f - envTemp) / 3.0f, 0, 1) : 0.0f;
-  float sHum = sensorsOk && !isnan(envHum) ? cf((envHum - 75.0f) / 15.0f, 0, 1) : 0.0f;
-  float sDry = sensorsOk && !isnan(envHum) ? cf((30.0f - envHum) / 15.0f, 0, 1) : 0.0f;
-  float sNoise = cf((micRms - micNoiseFloor * 2.0f) / (micNoiseFloor * 3.0f), 0, 1);
-  float sQuiet = (micReady ? 1.0f : 0.0f) * cf((200.0f - micRms) / 200.0f, 0, 1);
-  float sRain = (!isnan(envPress) && !isnan(pressHourAgo)) ? cf((pressHourAgo - envPress) / 2.0f, 0, 1) : 0.0f;
+  float sHot = sensorsOk && !isnan(envTemp) ? cf((envTemp - MINIAI_HOT_C) / MINIAI_TEMP_SCALE_C, 0, 1) : 0.0f;
+  float sCold = sensorsOk && !isnan(envTemp) ? cf((MINIAI_COLD_C - envTemp) / MINIAI_TEMP_SCALE_C, 0, 1) : 0.0f;
+  float sHum = sensorsOk && !isnan(envHum) ? cf((envHum - MINIAI_HUM_HIGH) / MINIAI_HUM_SCALE, 0, 1) : 0.0f;
+  float sDry = sensorsOk && !isnan(envHum) ? cf((MINIAI_HUM_LOW - envHum) / MINIAI_HUM_SCALE, 0, 1) : 0.0f;
+  float sNoise = cf((micRms - micNoiseFloor * MINIAI_NOISE_GATE) / (micNoiseFloor * MINIAI_NOISE_SCALE), 0, 1);
+  float sQuiet = (micReady ? 1.0f : 0.0f) * cf((MINIAI_QUIET_CEILING - micRms) / MINIAI_QUIET_CEILING, 0, 1);
+  float sRain = (!isnan(envPress) && !isnan(pressHourAgo)) ? cf((pressHourAgo - envPress) / MINIAI_PRESSURE_SCALE, 0, 1) : 0.0f;
   float sTimer = timerRunning ? 1.0f : 0.0f;
   float sAnom = anomalyActive ? 1.0f : 0.0f;
   char cands[8][72]; float scores[8];
-  snprintf(cands[0], sizeof(cands[0]), "Timer running: %lu min left. Focus!", timerRemainingSec / 60); scores[0] = sTimer;
-  snprintf(cands[1], sizeof(cands[1]), "Env shifting! %s", anomalyMsg); scores[1] = sAnom;
+  snprintf(cands[0], sizeof(cands[0]), "Timer running: %lu min left. Focus!", timerRemainingSec / 60); scores[0] = sTimer * MINIAI_W_TIMER;
+  snprintf(cands[1], sizeof(cands[1]), "Env shifting! %s", anomalyMsg); scores[1] = sAnom * MINIAI_W_ANOMALY;
   if (sensorsOk && !isnan(envTemp)) {
     snprintf(cands[2], sizeof(cands[2]), "It's %dC - warm. Hydrate, human!", (int)envTemp);
     snprintf(cands[3], sizeof(cands[3]), "It's %dC - chilly. Grab a jacket!", (int)envTemp);
@@ -967,30 +1662,31 @@ void triggerMiniAI() {
   }
   if (sensorsOk && !isnan(envHum)) snprintf(cands[4], sizeof(cands[4]), "Humidity %d%% - fan time!", (int)envHum);
   else strlcpy(cands[4], "Room sensor unavailable.", sizeof(cands[4]));
-  scores[2] = sHot; scores[3] = sCold; scores[4] = sHum;
-  snprintf(cands[5], sizeof(cands[5]), "Air is dry - sip some water!"); scores[5] = sDry;
-  snprintf(cands[6], sizeof(cands[6]), "Room noisy - find a quiet spot!"); scores[6] = sNoise;
+  scores[2] = sHot * MINIAI_W_TEMP; scores[3] = sCold * MINIAI_W_TEMP; scores[4] = sHum * MINIAI_W_HUM;
+  snprintf(cands[5], sizeof(cands[5]), "Air is dry - sip some water!"); scores[5] = sDry * MINIAI_W_HUM;
+  snprintf(cands[6], sizeof(cands[6]), "Room noisy - find a quiet spot!"); scores[6] = sNoise * MINIAI_W_NOISE;
   if (sRain > 0.3f) snprintf(cands[7], sizeof(cands[7]), "Pressure falling - rain likely soon.");
   else snprintf(cands[7], sizeof(cands[7]), "Room quiet & stable. Perfect for deep work!");
-  scores[7] = max(sQuiet, sRain * 0.9f);
+  scores[7] = max(sQuiet, sRain * MINIAI_W_PRESSURE);
   int best = 0;
   for (int i = 1; i < 8; i++) if (scores[i] > scores[best]) best = i;
-  if (scores[best] < 0.15f) best = 7;
+  if (scores[best] < MINIAI_MIN_SCORE) best = 7;
   strlcpy(aiResponse, cands[best], sizeof(aiResponse));
-  Serial.print("{\"type\":\"decision\",\"msg\":\"MiniAI: "); Serial.print(aiResponse); Serial.println("\"}");
+  char aiEvent[112];
+  snprintf(aiEvent, sizeof(aiEvent), "MiniAI: %s", aiResponse);
+  emitDecision(aiEvent);
+  Serial.print("MiniAI us="); Serial.println(micros() - startTime);
 }
 
 void processVoiceCommand() {
   isAiResponding = true; aiResponseStart = millis(); currentPage = PAGE_KWS;
-  // Counting loud syllables is not speech recognition. Never start or stop a
-  // timer from that guess; leave timer control to the physical button.
   if (commandSyllables == 0) strlcpy(aiResponse, "No speech heard. Timer unchanged.", sizeof(aiResponse));
   else strlcpy(aiResponse, "Speech not recognized. Timer unchanged.", sizeof(aiResponse));
 }
 
 void keywordSpotted() {
   kwsActiveUntil = millis() + 2500; excitedUntil = millis() + 2500; lastInteraction = millis(); buzzKws();
-  Serial.println("{\"type\":\"decision\",\"msg\":\"Wake word detected\"}");
+  emitDecision("Wake word detected");
 #if USE_TFLITE
   isListeningForCommand = false;
   strlcpy(aiResponse, "Wake word recognized", sizeof(aiResponse));
@@ -1014,11 +1710,11 @@ void handleKeywordLabel(int label) {
     if (timerRemainingSec == 0) timerRemainingSec = timerDurationSec;
     timerRunning = true; timerLock = true; timerLastTick = now;
     strlcpy(aiResponse, "Focus timer started", sizeof(aiResponse)); buzzHappy();
-    Serial.println("{\"type\":\"decision\",\"msg\":\"Voice command: start timer\"}");
+    emitDecision("Voice command: start timer");
   } else if (label == KWS_LABEL_STOP_TIMER) {
     timerRunning = false; timerLock = false;
     strlcpy(aiResponse, "Focus timer stopped", sizeof(aiResponse)); buzzTap();
-    Serial.println("{\"type\":\"decision\",\"msg\":\"Voice command: stop timer\"}");
+    emitDecision("Voice command: stop timer");
   } else return;
   isAiResponding = true; aiResponseStart = now; currentPage = PAGE_KWS;
 }
@@ -1026,16 +1722,16 @@ void handleKeywordLabel(int label) {
 
 void petAction(unsigned long now, bool strongRub) {
   lastInteraction = now;
-  if (neglectSleepy) { excitedUntil = now + 3000; buzzHappy(); return; }
-  if (now < annoyedUntil) { annoyedUntil = now + 4000; buzzGrumble(); return; }
+  if (neglectSleepy) { excitedUntil = now + 3000; buzzHappy(); emitEvent("Touch", "DeskPal was petted awake"); return; }
+  if (now < annoyedUntil) { annoyedUntil = now + 4000; buzzGrumble(); emitEvent("Touch", "Petting while annoyed"); return; }
   if (now - petWindowStart > PET_WINDOW_MS) { petWindowStart = now; petCount = 0; }
   petCount++;
-  if (petCount >= PET_LIMIT) { annoyedUntil = now + 5000; petCount = 0; buzzGrumble(); Serial.println("{\"type\":\"decision\",\"msg\":\"Over-petted - angry\"}"); }
-  else { pettedUntil = now + (strongRub ? 5000UL : 3000UL); buzzHappy(); }
+  if (petCount >= PET_LIMIT) { annoyedUntil = now + 5000; petCount = 0; buzzGrumble(); emitDecision("Over-petted - angry"); }
+  else { pettedUntil = now + (strongRub ? 5000UL : 3000UL); buzzHappy(); emitEvent("Touch", strongRub ? "Strong pet detected" : "DeskPal was petted"); }
 }
 void longPetAction(unsigned long now) {
   lastInteraction = now; annoyedUntil = 0; petCount = 0; pettedUntil = now + 6000; buzzHappy();
-  Serial.println("{\"type\":\"decision\",\"msg\":\"Long cuddle - calmed\"}");
+  emitDecision("Long cuddle - calmed");
 }
 
 void initMic() {
@@ -1088,15 +1784,12 @@ bool detectHeyPalEnergy(float rms) {
 }
 void processAudio() {
   if (!micReady || micMuted) return;
-  readMicRms(); // Audio level only unless a real keyword model is integrated.
+  readMicRms();
 #if USE_TFLITE
   int label = classifyKeywordEdge();
   handleKeywordLabel(label);
 #endif
 }
-
-// --- End DeskPalAudio.h ---
-
 
 float readBatteryPct() {
 #if ENABLE_BATTERY
@@ -1107,35 +1800,73 @@ float readBatteryPct() {
   return NAN;
 #endif
 }
+const char* pageName(int page) {
+  static const char* names[] = {"Eyes", "Clock", "Weather", "Forecast", "Room", "Insights", "Microphone", "Timer"};
+  return (page >= PAGE_EYES && page <= PAGE_TIMER) ? names[page] : "Unknown";
+}
 void emitDashboardTelemetry() {
   static unsigned long lastEmit = 0;
   if (millis() - lastEmit < 1000) return;
   lastEmit = millis(); batteryPct = readBatteryPct();
+  static unsigned long lastHeapReportAt = 0;
+  if (lastHeapReportAt == 0 || lastEmit - lastHeapReportAt >= 60000UL) {
+    lastHeapReportAt = lastEmit;
+    Serial.printf("Heap free=%u min=%u\n", ESP.getFreeHeap(), ESP.getMinFreeHeap());
+  }
+  static int lastLoggedPage = -1;
+  if (currentPage != lastLoggedPage) {
+    char pageMessage[40];
+    snprintf(pageMessage, sizeof(pageMessage), "Page changed to %s", pageName(currentPage));
+    emitEvent("Navigation", pageMessage);
+    lastLoggedPage = currentPage;
+  }
+  static bool lastLoggedAnomaly = false;
+  if (anomalyActive != lastLoggedAnomaly) {
+    emitEvent("Anomaly", anomalyActive ? "Sensor anomaly active" : "Sensor anomaly cleared");
+    lastLoggedAnomaly = anomalyActive;
+  }
   Serial.print("{\"type\":\"telemetry\",\"schema\":1,\"uptimeMs\":"); Serial.print(millis());
   Serial.print(",\"sensorsOk\":"); Serial.print(sensorsOk ? "true" : "false");
   Serial.print(",\"sensorAgeMs\":"); if (lastGoodSensorRead) Serial.print(millis() - lastGoodSensorRead); else Serial.print("null");
   Serial.print(",\"micReady\":"); Serial.print(micReady ? "true" : "false");
   Serial.print(",\"modelReady\":"); Serial.print(KWS_MODEL_INTEGRATED ? "true" : "false");
   Serial.print(",\"t\":"); if (!sensorsOk || isnan(envTemp)) Serial.print("null"); else Serial.print(envTemp, 1);
+  Serial.print(",\"tRaw\":"); if (!sensorsOk || isnan(envTempRaw)) Serial.print("null"); else Serial.print(envTempRaw, 1);
+  Serial.print(",\"tempOffsetC\":"); Serial.print(tempOffsetC, 1);
   Serial.print(",\"h\":"); if (!sensorsOk || isnan(envHum)) Serial.print("null"); else Serial.print((int)envHum);
   Serial.print(",\"p\":"); if (!sensorsOk || isnan(envPress)) Serial.print("null"); else Serial.print((int)envPress);
   Serial.print(",\"mood\":\""); Serial.print(MOOD_NAMES[currentMood]);
   Serial.print("\",\"comfort\":\""); Serial.print(comfortNames[comfortClass]);
-  Serial.print("\",\"infMs\":"); Serial.print(infAvg, 2);
+  Serial.print("\",\"dewPointC\":"); if (!sensorsOk || !isfinite(dewPointC)) Serial.print("null"); else Serial.print(dewPointC, 1);
+  Serial.print(",\"heatIndexC\":"); if (!sensorsOk || !isfinite(heatIndexC)) Serial.print("null"); else Serial.print(heatIndexC, 1);
+  Serial.print(",\"comfortScore\":"); if (!sensorsOk || !isfinite(comfortScore)) Serial.print("null"); else Serial.print((int)comfortScore);
+  Serial.print(",\"moldRisk\":"); if (!sensorsOk) Serial.print("null"); else { Serial.print('\"'); Serial.print(moldRisk); Serial.print('\"'); }
+  Serial.print(",\"tempTrendCPerHr\":"); if (!sensorsOk || !isfinite(tempTrendCPerHr)) Serial.print("null"); else Serial.print(tempTrendCPerHr, 2);
+  Serial.print(",\"humTrendPerHr\":"); if (!sensorsOk || !isfinite(humTrendPerHr)) Serial.print("null"); else Serial.print(humTrendPerHr, 2);
+  Serial.print(",\"pressTrendHpaPerHr\":"); if (!sensorsOk || !isfinite(pressTrendHpaPerHr)) Serial.print("null"); else Serial.print(pressTrendHpaPerHr, 2);
+  Serial.print(",\"pressureForecast\":\""); Serial.print(pressureForecast); Serial.print('"');
+  Serial.print(",\"temperaturePrediction\":\""); Serial.print(temperaturePrediction); Serial.print('"');
+  Serial.print(",\"inferred\":\""); Serial.print(inferred); Serial.print('"');
+  Serial.print(",\"infMs\":"); Serial.print(infAvg, 2);
   Serial.print(",\"batt\":"); if (isnan(batteryPct)) Serial.print("null"); else Serial.print(batteryPct, 0);
   Serial.print(",\"micMute\":"); Serial.print(micMuted ? "true" : "false");
   Serial.print(",\"micRms\":"); Serial.print(micRms, 0);
   Serial.print(",\"timerMinutes\":"); Serial.print(timerDurationSec / 60UL);
   Serial.print(",\"timerRemainingSec\":"); Serial.print(timerRemainingSec);
   Serial.print(",\"timerRunning\":"); Serial.print(timerRunning ? "true" : "false");
+  Serial.print(",\"timerAlarm\":"); Serial.print(isTimerAlarm ? "true" : "false");
+  Serial.print(",\"page\":"); Serial.print(currentPage);
   Serial.print(",\"anomaly\":"); Serial.print(anomalyActive ? "true" : "false");
   Serial.print(",\"climate\":"); Serial.print(climateZone);
   Serial.print(",\"histT\":[");
-  int n = histFilled ? 60 : histIdx;
-  for (int i = 0; i < n; i++) { int idx = histFilled ? (histIdx + i) % 60 : i; Serial.print(histTemp[idx], 1); if (i < n - 1) Serial.print(","); }
+  int n = min(historySampleCount(), (int)TELEMETRY_HISTORY_COUNT), start = historyStartIndex(n);
+  for (int i = 0; i < n; i++) { int idx = historyIndex(start, i); Serial.print(histTemp[idx], 1); if (i < n - 1) Serial.print(","); }
+  Serial.print("],\"histH\":[");
+  for (int i = 0; i < n; i++) { int idx = historyIndex(start, i); Serial.print(histHum[idx], 1); if (i < n - 1) Serial.print(","); }
+  Serial.print("],\"histP\":[");
+  for (int i = 0; i < n; i++) { int idx = historyIndex(start, i); Serial.print(histPress[idx], 1); if (i < n - 1) Serial.print(","); }
   Serial.println("]}");
 }
-
 
 int maxMainPage() { return PAGE_TIMER; }
 void recordTouchTransition(unsigned long now) {
@@ -1152,7 +1883,7 @@ void handleTouchPetting() {
   static unsigned long rawTouchChangedAt = 0;
   const bool sampledTouch = (digitalRead(TOUCH_PIN) == HIGH);
   if (sampledTouch != rawTouch) { rawTouch = sampledTouch; rawTouchChangedAt = now; return; }
-  if (now - rawTouchChangedAt < 40UL) return; // ignore short electrical glitches
+  if (now - rawTouchChangedAt < 40UL) return;
   const bool t = rawTouch;
 
   if (t && !lastTouch) {
@@ -1165,11 +1896,8 @@ void handleTouchPetting() {
       touchLongHoldFired = true;
       lastInteraction = now;
       if (currentPage == PAGE_TIMER) {
-        timerRunning = false;
-        timerLock = false;
-        timerDurationSec = TIMER_MIN_MINS * 60UL;
-        timerRemainingSec = timerDurationSec;
-        buzzTap();
+        timerRunning = false; timerLock = false; timerDurationSec = TIMER_MIN_MINS * 60UL; timerRemainingSec = timerDurationSec;
+        emitEvent("Timer", "Timer reset to default duration"); buzzTap();
       } else {
         longPetAction(now);
       }
@@ -1180,11 +1908,11 @@ void handleTouchPetting() {
       const bool strongRub = (touchTransitions >= RUB_MIN_TRANSITIONS);
       if (heldMs < TOUCH_LONG_HOLD_MS) {
         if (currentPage == PAGE_TIMER) {
-          // On the timer page, the touch pad adjusts time instead of petting.
           if (!timerRunning && !isTimerAlarm) {
             timerDurationSec = min(timerDurationSec + 5UL * 60UL, 120UL * 60UL);
             timerRemainingSec = timerDurationSec;
             lastInteraction = now;
+            emitEvent("Timer", "Timer duration increased by 5 minutes");
             buzzTap();
           }
         } else {
@@ -1199,6 +1927,7 @@ void handleTouchPetting() {
 }
 
 void clearTimerAlarm() {
+  bool wasAlarm = isTimerAlarm;
   isTimerAlarm = false;
   timerRunning = false;
   timerLock = false;
@@ -1207,6 +1936,7 @@ void clearTimerAlarm() {
   digitalWrite(BUZZER_PIN, LOW);
   buzzQueueIdx = -1;
   buzzQueueLen = 0;
+  if (wasAlarm) emitEvent("Timer", "Timer alarm dismissed");
 }
 
 bool setTimerMinutes(int minutes) {
@@ -1220,6 +1950,9 @@ bool setTimerMinutes(int minutes) {
   buzzQueueIdx = -1;
   buzzQueueLen = 0;
   lastInteraction = millis();
+  char eventText[48];
+  snprintf(eventText, sizeof(eventText), "Timer set to %d minutes", minutes);
+  emitEvent("Timer", eventText);
   return true;
 }
 
@@ -1238,15 +1971,19 @@ void processSerialCommands() {
     StaticJsonDocument<128> command;
     if (deserializeJson(command, line)) continue;
     const char* name = command["cmd"] | "";
-    if (strcmp(name, "setTimer") == 0) {
+    if (strcmp(name, "getEvents") == 0) {
+      uint32_t afterId = command["after"] | 0UL;
+      sendDeviceEventHistory(afterId);
+    } else if (strcmp(name, "setTimer") == 0) {
       int minutes = command["minutes"] | 0;
-      if (setTimerMinutes(minutes)) {
-        Serial.print("{\"type\":\"decision\",\"msg\":\"Timer set to ");
-        Serial.print(minutes); Serial.println(" minutes\"}");
-      } else Serial.println("{\"type\":\"decision\",\"msg\":\"Timer must be 1 to 120 minutes\"}");
+      if (setTimerMinutes(minutes)) { } 
+      else emitDecision("Timer must be 1 to 120 minutes");
+    } else if (strcmp(name, "setTempOffset") == 0 && command["offset"].is<float>()) {
+      float offset = command["offset"].as<float>();
+      if (!setTemperatureOffset(offset)) emitDecision("Temperature correction must be -10 to +10 C");
     } else if (strcmp(name, "setMic") == 0 && command["enabled"].is<bool>()) {
       micMuted = !command["enabled"].as<bool>();
-      Serial.println(micMuted ? "{\"type\":\"decision\",\"msg\":\"Mic muted\"}" : "{\"type\":\"decision\",\"msg\":\"Mic level monitor enabled\"}");
+      emitDecision(micMuted ? "Mic muted" : "Mic level monitor enabled");
     }
   }
 }
@@ -1257,7 +1994,7 @@ void handleButtonNav() {
   static unsigned long rawButtonChangedAt = 0;
   const bool sampledPressed = (digitalRead(BTN_MICMUTE_PIN) == LOW);
   if (sampledPressed != rawPressed) { rawPressed = sampledPressed; rawButtonChangedAt = now; return; }
-  if (now - rawButtonChangedAt < 30UL) return; // debounce the physical button
+  if (now - rawButtonChangedAt < 30UL) return;
   const bool b = rawPressed;
 
   if (b && !lastBtn) {
@@ -1281,7 +2018,7 @@ void handleButtonNav() {
         buzzTap();
       } else if (currentPage == PAGE_EYES) {
         micMuted = !micMuted;
-        Serial.println(String("{\"type\":\"decision\",\"msg\":\"Mic ") + (micMuted ? "muted" : "unmuted (level monitor only; speech model not installed)") + "\"}");
+        emitDecision(micMuted ? "Mic muted" : "Mic unmuted (level monitor only)");
         buzzTap();
       } else {
         currentPage = PAGE_EYES;
@@ -1295,19 +2032,19 @@ void handleButtonNav() {
       lastInteraction = now;
       if (currentPage == PAGE_TIMER) {
         if (timerRunning) {
-          timerRunning = false; // pause and keep the remaining time
-          timerLock = false;
+          timerRunning = false; timerLock = false;
+          emitEvent("Timer", "Timer paused");
           buzzTap();
         } else if (!isTimerAlarm) {
           if (timerRemainingSec == 0) timerRemainingSec = timerDurationSec;
-          timerRunning = true;
-          timerLock = true;
-          timerLastTick = now;
+          timerRunning = true; timerLock = true; timerLastTick = now;
+          emitEvent("Timer", "Timer started");
           buzzTap();
         }
       } else {
         currentPage++;
         if (currentPage > maxMainPage()) currentPage = 0;
+        if (currentPage == PAGE_INSIGHTS) triggerMiniAI();
         lastSaccade = 0;
         buzzTap();
       }
@@ -1321,10 +2058,6 @@ void handleInputs() {
   handleButtonNav();
 }
 
-
-// --- Inlined from DeskPalNetwork.h ---
-
-// Local authenticated telemetry API and asynchronous weather networking.
 #if ENABLE_WEATHER
 void getWeatherAndForecast();
 WeatherSnapshot getWeatherSnapshot() {
@@ -1395,10 +2128,95 @@ bool tokenMatches(const String& candidate) {
 }
 
 void addApiCorsHeaders() {
-  configServer.sendHeader("Access-Control-Allow-Origin", "*");
+  configServer.sendHeader("Access-Control-Allow-Origin", DESKPAL_CORS_ORIGIN);
   configServer.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   configServer.sendHeader("Access-Control-Allow-Headers", "X-DeskPal-Token, Content-Type");
+  configServer.sendHeader("Access-Control-Allow-Private-Network", "true");
   configServer.sendHeader("Cache-Control", "no-store");
+}
+
+// Worst case: 60 values in each of three histories (up to 16 JSON bytes per
+// float plus separators), with the remaining telemetry fields. 4096 bytes
+// leaves room for the complete JSON and the MQTT packet header/topic.
+// Bound: 180 history numbers at up to 16 characters each plus one comma
+// apiece, and a conservative 700 bytes for all fixed fields and delimiters.
+static const size_t TELEMETRY_JSON_MAX_BYTES = 60U * 3U * 17U + 700U;
+static const size_t TELEMETRY_JSON_CAPACITY = 4096;
+static const size_t MQTT_PACKET_CAPACITY = TELEMETRY_JSON_CAPACITY + 96U;
+static_assert(TELEMETRY_JSON_CAPACITY > TELEMETRY_JSON_MAX_BYTES,
+              "Telemetry JSON buffer must fit the maximum payload");
+static char telemetryJsonBuffer[TELEMETRY_JSON_CAPACITY];
+static StaticJsonDocument<4096> telemetryJsonDoc;
+
+size_t buildTelemetryJson(char* out, size_t capacity) {
+  telemetryJsonDoc.clear();
+  JsonObject root = telemetryJsonDoc.to<JsonObject>();
+  root["type"] = "telemetry";
+  root["schema"] = 1;
+  root["uptimeMs"] = millis();
+  root["sensorsOk"] = sensorsOk;
+  if (lastGoodSensorRead) root["sensorAgeMs"] = millis() - lastGoodSensorRead;
+  else root["sensorAgeMs"] = nullptr;
+  root["micReady"] = micReady;
+  root["modelReady"] = (bool)KWS_MODEL_INTEGRATED;
+  if (!sensorsOk || isnan(envTemp)) root["t"] = nullptr; else root["t"] = roundf(envTemp * 10.0f) / 10.0f;
+  if (!sensorsOk || isnan(envTempRaw)) root["tRaw"] = nullptr; else root["tRaw"] = roundf(envTempRaw * 10.0f) / 10.0f;
+  root["tempOffsetC"] = roundf(tempOffsetC * 10.0f) / 10.0f;
+  if (!sensorsOk || isnan(envHum)) root["h"] = nullptr; else root["h"] = (int)envHum;
+  if (!sensorsOk || isnan(envPress)) root["p"] = nullptr; else root["p"] = (int)envPress;
+  root["mood"] = MOOD_NAMES[currentMood];
+  root["comfort"] = comfortNames[comfortClass];
+  if (!sensorsOk || !isfinite(dewPointC)) root["dewPointC"] = nullptr; else root["dewPointC"] = roundf(dewPointC * 10.0f) / 10.0f;
+  if (!sensorsOk || !isfinite(heatIndexC)) root["heatIndexC"] = nullptr; else root["heatIndexC"] = roundf(heatIndexC * 10.0f) / 10.0f;
+  if (!sensorsOk || !isfinite(comfortScore)) root["comfortScore"] = nullptr; else root["comfortScore"] = (int)comfortScore;
+  if (!sensorsOk) root["moldRisk"] = nullptr; else root["moldRisk"] = moldRisk;
+  if (!sensorsOk || !isfinite(tempTrendCPerHr)) root["tempTrendCPerHr"] = nullptr; else root["tempTrendCPerHr"] = roundf(tempTrendCPerHr * 100.0f) / 100.0f;
+  if (!sensorsOk || !isfinite(humTrendPerHr)) root["humTrendPerHr"] = nullptr; else root["humTrendPerHr"] = roundf(humTrendPerHr * 100.0f) / 100.0f;
+  if (!sensorsOk || !isfinite(pressTrendHpaPerHr)) root["pressTrendHpaPerHr"] = nullptr; else root["pressTrendHpaPerHr"] = roundf(pressTrendHpaPerHr * 100.0f) / 100.0f;
+  root["pressureForecast"] = pressureForecast;
+  root["temperaturePrediction"] = temperaturePrediction;
+  root["inferred"] = inferred;
+  root["infMs"] = roundf(infAvg * 100.0f) / 100.0f;
+  if (isnan(batteryPct)) root["batt"] = nullptr; else root["batt"] = (int)roundf(batteryPct);
+  root["micMute"] = micMuted;
+  root["micRms"] = (int)roundf(micRms);
+  root["timerMinutes"] = timerDurationSec / 60UL;
+  root["timerRemainingSec"] = timerRemainingSec;
+  root["timerRunning"] = timerRunning;
+  root["timerAlarm"] = isTimerAlarm;
+  root["page"] = currentPage;
+  root["anomaly"] = anomalyActive;
+  root["climate"] = climateZone;
+  root["comfortLoT"] = roundf(temperatureComfort.lo() * 10.0f) / 10.0f;
+  root["comfortHiT"] = roundf(temperatureComfort.hi() * 10.0f) / 10.0f;
+  root["comfortLoH"] = roundf(humidityComfort.lo() * 10.0f) / 10.0f;
+  root["comfortHiH"] = roundf(humidityComfort.hi() * 10.0f) / 10.0f;
+  root["comfortVotes"] = temperatureComfort.votes() + humidityComfort.votes();
+  root["comfortVotesT"] = temperatureComfort.votes();
+  root["comfortVotesH"] = humidityComfort.votes();
+  root["comfortPersonal"] = temperatureComfort.votes() >= 5 ||
+                            humidityComfort.votes() >= 5;
+  root["comfortPersonalT"] = temperatureComfort.votes() >= 5;
+  root["comfortPersonalH"] = humidityComfort.votes() >= 5;
+  const ClimateParams defaultComfort = getDefaultClimateParams();
+  root["defaultLoT"] = defaultComfort.tMid - defaultComfort.tHalf;
+  root["defaultHiT"] = defaultComfort.tMid + defaultComfort.tHalf;
+  root["defaultLoH"] = defaultComfort.hMid - defaultComfort.hHalf;
+  root["defaultHiH"] = defaultComfort.hMid + defaultComfort.hHalf;
+  JsonArray histT = root.createNestedArray("histT");
+  JsonArray histH = root.createNestedArray("histH");
+  JsonArray histP = root.createNestedArray("histP");
+  const int count = min(historySampleCount(), (int)TELEMETRY_HISTORY_COUNT);
+  const int start = historyStartIndex(count);
+  for (int i = 0; i < count; ++i) {
+    const int idx = historyIndex(start, i);
+    histT.add(roundf(histTemp[idx] * 10.0f) / 10.0f);
+    histH.add(roundf(histHum[idx] * 10.0f) / 10.0f);
+    histP.add(roundf(histPress[idx] * 10.0f) / 10.0f);
+  }
+  if (telemetryJsonDoc.overflowed()) return 0;
+  const size_t length = serializeJson(telemetryJsonDoc, out, capacity);
+  return length < capacity ? length : 0;
 }
 
 void sendTelemetryApi() {
@@ -1407,37 +2225,176 @@ void sendTelemetryApi() {
     configServer.send(401, "application/json", "{\"error\":\"valid device token required\"}");
     return;
   }
+  const size_t bodyLength = buildTelemetryJson(telemetryJsonBuffer, sizeof(telemetryJsonBuffer));
+  if (bodyLength == 0) {
+    addApiCorsHeaders();
+    configServer.send(500, "application/json", "{\"error\":\"telemetry payload overflow\"}");
+    return;
+  }
+  addApiCorsHeaders();
+  configServer.send(200, "application/json", telemetryJsonBuffer);
+}
+
+void sendEventsApi() {
+  if (!tokenMatches(configServer.header("X-DeskPal-Token"))) {
+    addApiCorsHeaders();
+    configServer.send(401, "application/json", "{\"error\":\"valid device token required\"}");
+    return;
+  }
+  uint32_t afterId = (uint32_t)strtoul(configServer.arg("after").c_str(), nullptr, 10);
   String body;
-  body.reserve(1100);
-  body = "{\"type\":\"telemetry\",\"schema\":1,\"uptimeMs\":"; body += millis();
-  body += ",\"sensorsOk\":"; body += sensorsOk ? "true" : "false";
-  body += ",\"sensorAgeMs\":";
-  if (lastGoodSensorRead) body += String(millis() - lastGoodSensorRead); else body += "null";
-  body += ",\"micReady\":"; body += micReady ? "true" : "false";
-  body += ",\"modelReady\":"; body += KWS_MODEL_INTEGRATED ? "true" : "false";
-  body += ",\"t\":"; body += (!sensorsOk || isnan(envTemp)) ? "null" : String(envTemp, 1);
-  body += ",\"h\":"; body += (!sensorsOk || isnan(envHum)) ? "null" : String((int)envHum);
-  body += ",\"p\":"; body += (!sensorsOk || isnan(envPress)) ? "null" : String((int)envPress);
-  body += ",\"mood\":\""; body += MOOD_NAMES[currentMood];
-  body += "\",\"comfort\":\""; body += comfortNames[comfortClass];
-  body += "\",\"infMs\":"; body += String(infAvg, 2);
-  body += ",\"batt\":"; body += isnan(batteryPct) ? "null" : String(batteryPct, 0);
-  body += ",\"micMute\":"; body += micMuted ? "true" : "false";
-  body += ",\"micRms\":"; body += String(micRms, 0);
-  body += ",\"timerMinutes\":"; body += timerDurationSec / 60UL;
-  body += ",\"timerRemainingSec\":"; body += timerRemainingSec;
-  body += ",\"timerRunning\":"; body += timerRunning ? "true" : "false";
-  body += ",\"anomaly\":"; body += anomalyActive ? "true" : "false";
-  body += ",\"climate\":"; body += climateZone; body += ",\"histT\":[";
-  int n = histFilled ? 60 : histIdx;
-  for (int i = 0; i < n; ++i) {
-    int idx = histFilled ? (histIdx + i) % 60 : i;
-    if (i) body += ',';
-    body += String(histTemp[idx], 1);
+  body.reserve(3600);
+  body = "{\"type\":\"events\",\"latestId\":";
+  body += nextDeviceEventId - 1;
+  uint32_t oldestId = nextDeviceEventId > DEVICE_EVENT_CAPACITY ? nextDeviceEventId - DEVICE_EVENT_CAPACITY : 1;
+  uint32_t dropped = afterId + 1 < oldestId ? oldestId - afterId - 1 : 0;
+  body += ",\"dropped\":"; body += dropped;
+  body += ",\"events\":[";
+  bool first = true;
+  for (uint32_t id = oldestId; id < nextDeviceEventId; ++id) {
+    if (id <= afterId) continue;
+    const DeviceEvent& event = deviceEvents[(id - 1) % DEVICE_EVENT_CAPACITY];
+    if (event.id != id) continue;
+    if (!first) body += ',';
+    first = false;
+    StaticJsonDocument<256> row;
+    row["id"] = event.id;
+    row["uptimeMs"] = event.uptimeMs;
+    row["source"] = event.source;
+    row["msg"] = event.message;
+    serializeJson(row, body);
   }
   body += "]}";
   addApiCorsHeaders();
   configServer.send(200, "application/json", body);
+}
+
+void handleWifiScanApi() {
+  if (!tokenMatches(configServer.header("X-DeskPal-Token"))) {
+    addApiCorsHeaders(); configServer.send(401, "application/json", "{\"error\":\"valid device token required\"}"); return;
+  }
+  int count = WiFi.scanComplete();
+  if (count == WIFI_SCAN_RUNNING) {
+    addApiCorsHeaders(); configServer.send(200, "application/json", "{\"state\":\"scanning\",\"networks\":[]}"); return;
+  }
+  if (count == WIFI_SCAN_FAILED) {
+    WiFi.scanNetworks(true, false);
+    addApiCorsHeaders(); configServer.send(200, "application/json", "{\"state\":\"scanning\",\"networks\":[]}"); return;
+  }
+  StaticJsonDocument<2048> result;
+  result["state"] = "complete";
+  JsonArray networks = result.createNestedArray("networks");
+  for (int i = 0; i < count && networks.size() < 20; ++i) {
+    String name = WiFi.SSID(i);
+    if (name.isEmpty()) continue;
+    JsonObject row = networks.createNestedObject();
+    row["ssid"] = name;
+    row["rssi"] = WiFi.RSSI(i);
+  }
+  WiFi.scanDelete();
+  String body; serializeJson(result, body);
+  addApiCorsHeaders(); configServer.send(200, "application/json", body);
+}
+
+void handleWifiSaveApi() {
+  if (!tokenMatches(configServer.header("X-DeskPal-Token"))) {
+    addApiCorsHeaders(); configServer.send(401, "application/json", "{\"error\":\"valid device token required\"}"); return;
+  }
+  StaticJsonDocument<256> request;
+  DeserializationError err = deserializeJson(request, configServer.arg("plain"));
+  String ssid = (!err && request["ssid"].is<const char*>()) ? request["ssid"].as<String>() : "";
+  String pass = (!err && request["password"].is<const char*>()) ? request["password"].as<String>() : "";
+  if (ssid.isEmpty() || ssid.length() > 32 || pass.length() > 63 || (!pass.isEmpty() && pass.length() < 8)) {
+    addApiCorsHeaders(); configServer.send(400, "application/json", "{\"error\":\"Choose a network name; password must be empty or 8 to 63 characters\"}"); return;
+  }
+  if (!prefs.begin("deskpal", false)) {
+    addApiCorsHeaders(); configServer.send(500, "application/json", "{\"error\":\"Could not open saved settings\"}"); return;
+  }
+  bool saved = putStr("ssid", ssid) && putStr("pass", pass);
+  prefs.end();
+  if (!saved) {
+    addApiCorsHeaders(); configServer.send(500, "application/json", "{\"error\":\"Could not save Wi-Fi settings\"}"); return;
+  }
+  addApiCorsHeaders();
+  configServer.send(200, "application/json", "{\"ok\":true,\"restarting\":true}");
+  delay(900);
+  ESP.restart();
+}
+
+void handleCalibrationApi() {
+  if (!tokenMatches(configServer.header("X-DeskPal-Token"))) {
+    addApiCorsHeaders(); configServer.send(401, "application/json", "{\"error\":\"valid device token required\"}"); return;
+  }
+  StaticJsonDocument<128> command;
+  DeserializationError err = deserializeJson(command, configServer.arg("plain"));
+  float offset = (!err && command["offset"].is<float>()) ? command["offset"].as<float>() : NAN;
+  if (!setTemperatureOffset(offset)) {
+    addApiCorsHeaders(); configServer.send(400, "application/json", "{\"error\":\"offset must be from -10 to +10 C\"}"); return;
+  }
+  addApiCorsHeaders();
+  configServer.send(200, "application/json", String("{\"ok\":true,\"tempOffsetC\":") + String(tempOffsetC, 1) + "}");
+}
+
+void handleAlertsApi() {
+  if (!tokenMatches(configServer.header("X-DeskPal-Token"))) {
+    addApiCorsHeaders(); configServer.send(401, "application/json", "{\"error\":\"valid device token required\"}"); return;
+  }
+  StaticJsonDocument<192> request;
+  DeserializationError err = deserializeJson(request, configServer.arg("plain"));
+  if (err || !request["alertTmax"].is<float>() || !request["alertTmin"].is<float>() ||
+      !request["alertHmax"].is<float>()) {
+    addApiCorsHeaders();
+    configServer.send(400, "application/json", "{\"error\":\"Provide numeric alertTmax, alertTmin, and alertHmax values\"}");
+    return;
+  }
+  const float tmax = request["alertTmax"].as<float>();
+  const float tmin = request["alertTmin"].as<float>();
+  const float hmax = request["alertHmax"].as<float>();
+  if (!setAlertLimits(tmax, tmin, hmax)) {
+    addApiCorsHeaders();
+    configServer.send(400, "application/json", "{\"error\":\"Use 0 to disable; temperature limits must be -20 to 60 C, humidity 1 to 100%, and low must be below high\"}");
+    return;
+  }
+  addApiCorsHeaders();
+  configServer.send(200, "application/json", "{\"ok\":true}");
+}
+
+void handleComfortApi() {
+  if (!tokenMatches(configServer.header("X-DeskPal-Token"))) {
+    addApiCorsHeaders();
+    configServer.send(401, "application/json",
+                      "{\"error\":\"valid device token required\"}");
+    return;
+  }
+
+  const String body = configServer.arg("plain");
+  if (body.isEmpty() || body.length() > 128) {
+    addApiCorsHeaders();
+    configServer.send(400, "application/json", "{\"error\":\"invalid command\"}");
+    return;
+  }
+
+  StaticJsonDocument<192> request;
+  if (deserializeJson(request, body) || !request.is<JsonObject>()) {
+    addApiCorsHeaders();
+    configServer.send(400, "application/json", "{\"error\":\"invalid command\"}");
+    return;
+  }
+
+  const int result = processComfortCommand(request.as<JsonObject>());
+  if (result != COMFORT_COMMAND_OK) {
+    addApiCorsHeaders();
+    configServer.send(result == COMFORT_COMMAND_INVALID ? 400 : 409,
+                      "application/json",
+                      result == COMFORT_COMMAND_INVALID
+                          ? "{\"error\":\"unsupported comfort command\"}"
+                          : "{\"error\":\"comfort command rejected\"}");
+    return;
+  }
+
+  publishComfortTelemetry();
+  addApiCorsHeaders();
+  configServer.send(200, "application/json", "{\"ok\":true}");
 }
 
 void handleTimerApi() {
@@ -1459,9 +2416,162 @@ void handleCorsOptions() {
   addApiCorsHeaders();
   configServer.send(204);
 }
-#endif
 
-#if ENABLE_WEATHER
+static unsigned long mqttRetryAt = 0, mqttLastPublish = 0;
+// The public broker is unauthenticated; the pairing code acts as a shared secret.
+// Accept only harmless comfort feedback commands on this topic.
+static const char* MQTT_HOST = "broker.hivemq.com";
+static const uint16_t MQTT_PORT = 1883;
+static const unsigned long WIFI_CONNECT_TIMEOUT_MS = 20000UL;
+static const unsigned long WIFI_BACKOFF_MS[] = { 5000UL, 10000UL, 20000UL, 30000UL };
+static const unsigned long MQTT_RETRY_DELAY_MS = 15000UL;
+
+void setWifiState(WifiState nextState, const char* message) {
+  if (wifiState == nextState) return;
+  wifiState = nextState;
+  emitEvent("Network", message);
+}
+
+void setMqttState(MqttState nextState, const char* message) {
+  if (mqttState == nextState) return;
+  mqttState = nextState;
+  emitEvent("Network", message);
+}
+
+void startWifiConnection(unsigned long now) {
+  if (!wifiWant || wifiSsid.length() == 0 || inConfigMode) return;
+  wifiOn = false;
+  wifiAttemptStartedAt = now;
+  setWifiState(NET_WIFI_CONNECTING, "Wi-Fi connecting");
+  Serial.printf("Wi-Fi attempt %u\n", (unsigned)(wifiFailureCount + 1));
+  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+}
+
+void networkRestart(const char* reason) {
+  if (inConfigMode || wifiSsid.length() == 0 || !wifiWant) {
+    Serial.println("Network restart suppressed: portal active or no saved Wi-Fi credentials");
+    return;
+  }
+  if (!prefs.begin("deskpal", false)) {
+    Serial.println("Network restart skipped: could not save restart reason");
+    return;
+  }
+  const bool saved = prefs.putString("restartReason", reason) > 0;
+  prefs.end();
+  if (!saved) {
+    Serial.println("Network restart skipped: could not save restart reason");
+    return;
+  }
+  Serial.println("Restarting after repeated network failures");
+  ESP.restart();
+}
+
+void printPendingNetworkRestartReason() {
+  if (!prefs.begin("deskpal", false)) return;
+  String reason = prefs.getString("restartReason", "");
+  if (reason.length()) {
+    Serial.print("Previous network restart reason: ");
+    Serial.println(reason);
+    prefs.remove("restartReason");
+  }
+  prefs.end();
+}
+
+void handleWifiFailure(unsigned long now) {
+  wifiOn = false;
+  timeSynced = false;
+  ++wifiFailureCount;
+  Serial.printf("Wi-Fi connection failure %u/5\n", (unsigned)wifiFailureCount);
+  setWifiState(NET_WIFI_BACKOFF, "Wi-Fi connection failed; backing off");
+  if (wifiFailureCount >= 5) {
+    networkRestart("wifi_fail_5");
+    return;
+  }
+  const size_t delayIndex = min((size_t)(wifiFailureCount - 1),
+                                sizeof(WIFI_BACKOFF_MS) / sizeof(WIFI_BACKOFF_MS[0]) - 1);
+  wifiRetryAt = now + WIFI_BACKOFF_MS[delayIndex];
+}
+
+void loadPairCode() {
+  static const char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  if (!prefs.begin("deskpal", false)) { strlcpy(pairCode, "NOSTORE1", sizeof(pairCode)); return; }
+  String code = prefs.getString("pairCode", "");
+  if (code.length() != 8) {
+    char gen[9];
+    for (int i = 0; i < 8; ++i) gen[i] = alphabet[esp_random() & 31];
+    gen[8] = '\0';
+    code = gen;
+    prefs.putString("pairCode", code);
+  }
+  strlcpy(pairCode, code.c_str(), sizeof(pairCode));
+  prefs.end();
+}
+
+static void mqttTopic(char* out, size_t n, const char* leaf) {
+  snprintf(out, n, "deskpal/v1/%s/%s", pairCode, leaf);
+}
+
+void publishComfortTelemetry() {
+  if (!wifiOn || !mqtt.connected()) return;
+  const size_t bodyLength = buildTelemetryJson(telemetryJsonBuffer, sizeof(telemetryJsonBuffer));
+  if (bodyLength == 0) {
+    Serial.println("Warning: comfort telemetry JSON buffer overflow");
+    return;
+  }
+  char topic[64]; mqttTopic(topic, sizeof(topic), "telemetry");
+  if (!mqtt.publish(topic, (const uint8_t*)telemetryJsonBuffer, bodyLength, false))
+    Serial.println("Warning: comfort telemetry publish failed");
+}
+
+void mqttComfortCommand(char* topic, byte* payload, unsigned int length) {
+  (void)topic;
+  if (!payload || length == 0 || length > 128) return;
+  char json[129];
+  memcpy(json, payload, length);
+  json[length] = '\0';
+  StaticJsonDocument<192> request;
+  if (deserializeJson(request, json, length) || !request.is<JsonObject>()) return;
+  if (processComfortCommand(request.as<JsonObject>()) == COMFORT_COMMAND_OK)
+    publishComfortTelemetry();
+}
+
+void mqttPublishEvent(const DeviceEvent& e) {
+  if (!wifiOn || !mqtt.connected()) return;
+  char topic[64]; mqttTopic(topic, sizeof(topic), "events");
+  StaticJsonDocument<256> doc;
+  doc["type"] = "decision"; doc["id"] = e.id; doc["uptimeMs"] = e.uptimeMs;
+  doc["source"] = e.source; doc["msg"] = e.message;
+  char buf[256]; size_t n = serializeJson(doc, buf, sizeof(buf));
+  if (!mqtt.publish(topic, (const uint8_t*)buf, n, false)) Serial.println("Warning: MQTT event publish failed");
+}
+
+void mqttTick(unsigned long now) {
+  if (!wifiOn) return;
+  if (!mqtt.connected()) {
+    if (now < mqttRetryAt) return;
+    mqttRetryAt = now + 15000UL;
+    char cid[32]; snprintf(cid, sizeof(cid), "dp-%s-%04x", pairCode, (unsigned)(esp_random() & 0xFFFF));
+    mqtt.setServer(MQTT_HOST, MQTT_PORT);
+    mqtt.setBufferSize(MQTT_PACKET_CAPACITY);
+    mqtt.setSocketTimeout(2);
+    mqtt.setCallback(mqttComfortCommand);
+    if (!mqtt.connect(cid)) return;
+    Serial.println("Cloud link: connected");
+    char commandTopic[64]; mqttTopic(commandTopic, sizeof(commandTopic), "cmd");
+    if (!mqtt.subscribe(commandTopic)) Serial.println("Warning: MQTT comfort command subscription failed");
+    mqttLastPublish = 0;
+  }
+  mqtt.loop();
+  if (now - mqttLastPublish >= 2000UL) {
+    mqttLastPublish = now;
+    char topic[64]; mqttTopic(topic, sizeof(topic), "telemetry");
+    const size_t bodyLength = buildTelemetryJson(telemetryJsonBuffer, sizeof(telemetryJsonBuffer));
+    if (bodyLength == 0) Serial.println("Warning: telemetry JSON buffer overflow");
+    else if (!mqtt.publish(topic, (const uint8_t*)telemetryJsonBuffer, bodyLength, false))
+      Serial.println("Warning: MQTT telemetry publish failed");
+  }
+}
+
 const unsigned char* getBigIcon(const char* w) {
   if (strcmp(w, "Clear") == 0) return bmp_clear;
   if (strcmp(w, "Rain") == 0 || strcmp(w, "Drizzle") == 0) return bmp_rain;
@@ -1510,35 +2620,51 @@ static void buildOwmUrl(char* out, size_t n, const char* path, const char* cityQ
 }
 
 void getWeatherAndForecast() {
-  if (WiFi.status() != WL_CONNECTED || !timeSynced) return;
+  if (WiFi.status() != WL_CONNECTED) return;
+  
   WeatherSnapshot next = getWeatherSnapshot();
   char cityQ[193];
   trimUrlPart(city, cityQ, sizeof(cityQ));
-  if (cityQ[0] == '\0' || apiKey.isEmpty()) return;
+  if (cityQ[0] == '\0' || apiKey.isEmpty()) {
+    next.ok = false;
+    next.weatherHttp = -100; 
+    publishWeatherSnapshot(next);
+    return;
+  }
   char cc[16]; trimUrlPart(countryCode, cc, sizeof(cc));
-  if (strlen(cc) != 2) owmUseCountry = false;
+  bool useCountry = (strlen(cc) == 2);
 
   char urlBuf[640];
   HTTPClient http;
-  http.setConnectTimeout(2500);
-  http.setTimeout(2500);
+  http.setConnectTimeout(8000);
+  http.setTimeout(8000);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  buildOwmUrl(urlBuf, sizeof(urlBuf), "weather", cityQ, owmUseCountry);
-  if (!http.begin(urlBuf, OPENWEATHER_ROOT_CA)) {
-    next.weatherHttp = HTTPC_ERROR_CONNECTION_REFUSED; next.ok = false;
-    publishWeatherSnapshot(next); return;
+  
+  buildOwmUrl(urlBuf, sizeof(urlBuf), "weather", cityQ, useCountry);
+  if (!http.begin(urlBuf)) {
+    next.weatherHttp = HTTPC_ERROR_CONNECTION_REFUSED; 
+    next.ok = false;
+    publishWeatherSnapshot(next); 
+    return;
   }
+  
   int httpCode = http.GET();
-  if (httpCode == 404 && owmUseCountry) {
-    http.end(); owmUseCountry = false;
+  if (httpCode == 404 && useCountry) {
+    http.end(); useCountry = false;
     buildOwmUrl(urlBuf, sizeof(urlBuf), "weather", cityQ, false);
-    if (!http.begin(urlBuf, OPENWEATHER_ROOT_CA)) {
-      next.weatherHttp = HTTPC_ERROR_CONNECTION_REFUSED; next.ok = false;
-      publishWeatherSnapshot(next); return;
+    if (!http.begin(urlBuf)) {
+      next.weatherHttp = HTTPC_ERROR_CONNECTION_REFUSED; 
+      next.ok = false;
+      publishWeatherSnapshot(next); 
+      return;
     }
     httpCode = http.GET();
   }
-  next.weatherHttp = httpCode;
+  
+  if (httpCode != HTTP_CODE_OK) { 
+    Serial.print("Weather HTTP "); Serial.print(httpCode); Serial.print(" "); Serial.println(HTTPClient::errorToString(httpCode)); 
+  }
+  
   bool weatherParsed = false;
   if (httpCode == HTTP_CODE_OK) {
     DynamicJsonDocument doc(2048);
@@ -1561,6 +2687,7 @@ void getWeatherAndForecast() {
   http.end();
   if (!weatherParsed) {
     next.ok = false;
+    next.weatherHttp = httpCode;
     publishWeatherSnapshot(next);
     return;
   }
@@ -1571,8 +2698,8 @@ void getWeatherAndForecast() {
     return;
   }
   for (int i = 0; i < 3; ++i) next.forecast[i] = {};
-  buildOwmUrl(urlBuf, sizeof(urlBuf), "forecast", cityQ, owmUseCountry);
-  if (!http.begin(urlBuf, OPENWEATHER_ROOT_CA)) {
+  buildOwmUrl(urlBuf, sizeof(urlBuf), "forecast", cityQ, useCountry);
+  if (!http.begin(urlBuf)) {
     next.forecastHttp = HTTPC_ERROR_CONNECTION_REFUSED;
     publishWeatherSnapshot(next); return;
   }
@@ -1608,7 +2735,7 @@ void getWeatherAndForecast() {
         if (slot < 0) for (int i = 0; i < 3; ++i) if (dayKeys[i] == 0) { slot = i; dayKeys[i] = dayKey; dayWeekdays[i] = localForecast.tm_wday; break; }
         if (slot < 0) continue;
         int localSeconds = localForecast.tm_hour * 3600 + localForecast.tm_min * 60 + localForecast.tm_sec;
-        int distance = abs(localSeconds - 43200); // use the forecast nearest to local noon
+        int distance = abs(localSeconds - 43200);
         if (distance >= bestDistance[slot]) continue;
         bestDistance[slot] = distance;
         next.forecast[slot].temp = (int)lroundf(item["main"]["temp"].as<float>());
@@ -1621,41 +2748,93 @@ void getWeatherAndForecast() {
   http.end();
   publishWeatherSnapshot(next);
 }
+
 void wifiTick(unsigned long now) {
-  if (wifiWant && !wifiOn && now >= wifiRetryAt) { wifiRetryAt = now + 30000; Serial.println("WiFi: retrying..."); WiFi.begin(wifiSsid.c_str(), wifiPass.c_str()); }
-  if (wifiWant && !wifiOn && WiFi.status() == WL_CONNECTED) {
-    wifiOn = true; configTime(0, 0, ntpServer); setenv("TZ", tzString.c_str(), 1); tzset(); timeSynced = false;
-    if (!telemetryServerStarted) {
-      const char* headerNames[] = { "X-DeskPal-Token" };
-      configServer.collectHeaders(headerNames, 1);
-      configServer.on("/api/telemetry", HTTP_GET, sendTelemetryApi);
-      configServer.on("/api/telemetry", HTTP_OPTIONS, handleCorsOptions);
-      configServer.on("/api/timer", HTTP_POST, handleTimerApi);
-      configServer.on("/api/timer", HTTP_OPTIONS, handleCorsOptions);
-      configServer.onNotFound([]() {
-        configServer.sendHeader("Access-Control-Allow-Origin", "*");
-        configServer.send(404, "application/json", "{\"error\":\"not found\"}");
-      });
-      MDNS.begin("deskpal");
-      configServer.begin(); telemetryServerStarted = true;
-      Serial.print("Telemetry API: http://"); Serial.print(WiFi.localIP()); Serial.println("/api/telemetry");
-      Serial.print("Telemetry token: "); Serial.println(telemetryToken);
-    }
-    lastWeatherUpdate = now;
-    Serial.println("WiFi: connected; waiting for NTP");
+  if (!wifiWant || wifiSsid.length() == 0 || inConfigMode) {
+    wifiOn = false;
+    setWifiState(NET_WIFI_IDLE, "Wi-Fi idle");
+    return;
   }
-  if (wifiOn && WiFi.status() != WL_CONNECTED) { wifiOn = false; wifiRetryAt = now + 10000; Serial.println("WiFi: lost, will retry"); }
+
+  if (wifiState == NET_WIFI_IDLE) startWifiConnection(now);
+  else if (wifiState == NET_WIFI_BACKOFF && now >= wifiRetryAt) startWifiConnection(now);
+
+  const wl_status_t status = WiFi.status();
+  if (wifiState == NET_WIFI_CONNECTING) {
+    if (status == WL_CONNECTED) {
+      wifiOn = true;
+      wifiFailureCount = 0;
+      mqttFailureCount = 0;
+      wifiRetryAt = 0;
+      mqttRetryAt = 0;
+      setWifiState(NET_WIFI_CONNECTED, "Wi-Fi connected");
+      // Request UTC from NTP, then apply the configured POSIX timezone locally.
+      // configTime() may reset TZ, so set it after every configTime() call.
+      configTime(0, 0, ntpServer, "time.google.com", "time.cloudflare.com");
+      setenv("TZ", tzString.c_str(), 1);
+      tzset();
+      timeSynced = false;
+
+      if (!telemetryServerStarted) {
+        const char* headerNames[] = { "X-DeskPal-Token" };
+        configServer.collectHeaders(headerNames, 1);
+        configServer.on("/api/telemetry", HTTP_GET, sendTelemetryApi);
+        configServer.on("/api/telemetry", HTTP_OPTIONS, handleCorsOptions);
+        configServer.on("/api/events", HTTP_GET, sendEventsApi);
+        configServer.on("/api/events", HTTP_OPTIONS, handleCorsOptions);
+        configServer.on("/api/wifi/scan", HTTP_GET, handleWifiScanApi);
+        configServer.on("/api/wifi/scan", HTTP_OPTIONS, handleCorsOptions);
+        configServer.on("/api/wifi", HTTP_POST, handleWifiSaveApi);
+        configServer.on("/api/wifi", HTTP_OPTIONS, handleCorsOptions);
+        configServer.on("/api/timer", HTTP_POST, handleTimerApi);
+        configServer.on("/api/timer", HTTP_OPTIONS, handleCorsOptions);
+        configServer.on("/api/calibration", HTTP_POST, handleCalibrationApi);
+        configServer.on("/api/calibration", HTTP_OPTIONS, handleCorsOptions);
+        configServer.on("/api/alerts", HTTP_POST, handleAlertsApi);
+        configServer.on("/api/alerts", HTTP_OPTIONS, handleCorsOptions);
+  configServer.on("/api/comfort", HTTP_POST, handleComfortApi);
+  configServer.on("/api/comfort", HTTP_OPTIONS, handleCorsOptions);
+        configServer.onNotFound([]() {
+          configServer.sendHeader("Access-Control-Allow-Origin", DESKPAL_CORS_ORIGIN);
+          configServer.send(404, "application/json", "{\"error\":\"not found\"}");
+        });
+        MDNS.begin("deskpal");
+        configServer.begin(); telemetryServerStarted = true;
+        Serial.print("Telemetry API: http://"); Serial.print(WiFi.localIP()); Serial.println("/api/telemetry");
+        Serial.print("Telemetry token: "); Serial.println(telemetryToken);
+        Serial.print("DASHBOARD PAIRING CODE: "); Serial.println(pairCode);
+      }
+      lastWeatherUpdate = 0;
+      Serial.println("Wi-Fi connected; waiting for NTP");
+    } else if (status == WL_CONNECT_FAILED ||
+               now - wifiAttemptStartedAt >= WIFI_CONNECT_TIMEOUT_MS) {
+      handleWifiFailure(now);
+    }
+  } else if (wifiState == NET_WIFI_CONNECTED && status != WL_CONNECTED) {
+    Serial.println("Wi-Fi link lost");
+    handleWifiFailure(now);
+  }
+
   if (wifiOn && !timeSynced) {
     time_t epoch = 0; time(&epoch);
-    if (epoch >= 1700000000) { timeSynced = true; lastWeatherUpdate = 0; Serial.println("NTP time synchronized"); }
+    if (epoch >= 1700000000) {
+      timeSynced = true;
+      lastWeatherUpdate = 0;
+      Serial.println("NTP time synchronized");
+      emitEvent("Network", "Clock synchronized");
+    } else {
+      static unsigned long lastNtpAttempt = 0;
+      if (now - lastNtpAttempt > 15000) {
+        lastNtpAttempt = now;
+        configTime(0, 0, ntpServer, "time.google.com", "time.cloudflare.com");
+        setenv("TZ", tzString.c_str(), 1);
+        tzset();
+        Serial.println("NTP: Retrying time sync...");
+      }
+    }
   }
 }
 #endif
-
-
-// --- End DeskPalNetwork.h ---
-
-
 
 bool currentTm(struct tm* t) {
   if (timeSynced) {
@@ -1666,10 +2845,6 @@ bool currentTm(struct tm* t) {
   return gmtime_r(&demo, t) != nullptr;
 }
 
-
-// --- Inlined from DeskPalDisplay.h ---
-
-// OLED drawing primitives, pages, and boot animation.
 void drawTypewriterText(const char* fullText, int yStart, int maxLines, unsigned long startTime) {
   display.setFont(NULL); display.setTextColor(OLED_WHITE);
   display.fillRect(0, yStart, SCREEN_WIDTH, maxLines * 10 + 2, OLED_BLACK);
@@ -1881,11 +3056,88 @@ void drawEnvPage() {
   char line[32];
   snprintf(line, sizeof(line), "%.1f C", envTemp); drawFitLine(line, 24, 14);
   snprintf(line, sizeof(line), "Humidity  %d%%", (int)envHum); drawFitLine(line, 42, 18);
+
+  const int sampleCount = min(historySampleCount(), (int)TELEMETRY_HISTORY_COUNT);
+  if (sampleCount < 5) return;
+  const int historyStart = historyStartIndex(sampleCount);
+
+  const int graphX = 64, graphY = 50, graphWidth = 60, graphHeight = 14;
+  float minTemp = INFINITY, maxTemp = -INFINITY;
+  for (int i = 0; i < sampleCount; ++i) {
+    const int idx = historyIndex(historyStart, i);
+    minTemp = fminf(minTemp, histTemp[idx]);
+    maxTemp = fmaxf(maxTemp, histTemp[idx]);
+  }
+  if (maxTemp - minTemp < 1.0f) {
+    const float center = (minTemp + maxTemp) * 0.5f;
+    minTemp = center - 0.5f;
+    maxTemp = center + 0.5f;
+  }
+
+  int previousX = graphX, previousY = graphY + graphHeight - 1;
+  for (int i = 0; i < sampleCount; ++i) {
+    const int idx = historyIndex(historyStart, i);
+    const int x = graphX + i * (graphWidth - 1) / (sampleCount - 1);
+    const float normalized = (histTemp[idx] - minTemp) / (maxTemp - minTemp);
+    const int y = graphY + graphHeight - 1 - (int)lroundf(normalized * (graphHeight - 1));
+    if (i > 0) display.drawLine(previousX, previousY, x, y, OLED_WHITE);
+    previousX = x;
+    previousY = y;
+  }
 }
 void drawInsightsPage() {
   drawHeader("INSIGHTS");
-  drawFitLine(insightTitle, 25, 21);
-  drawFitLine(insightAction, 42, 21);
+  display.setFont(NULL); display.setTextColor(OLED_WHITE);
+  const unsigned long panel = (millis() / 5000UL) % 4UL;
+  if (panel == 1) {
+    const bool learned = temperatureComfort.votes() >= 5;
+    const ClimateParams defaults = getDefaultClimateParams();
+    const float lo = learned ? temperatureComfort.lo() : defaults.tMid - defaults.tHalf;
+    const float hi = learned ? temperatureComfort.hi() : defaults.tMid + defaults.tHalf;
+    drawFitLine(learned ? "Temperature estimate" : "Default temp range", 21);
+    char rangeLine[32];
+    snprintf(rangeLine, sizeof(rangeLine), learned ? "Your range: %.0f-%.0fC" : "Default: %.0f-%.0fC", lo, hi);
+    drawFitLine(rangeLine, 34);
+    char votesLine[32];
+    if (learned) snprintf(votesLine, sizeof(votesLine), "Votes: %lu", (unsigned long)temperatureComfort.votes());
+    else snprintf(votesLine, sizeof(votesLine), "Votes: %lu (learning)", (unsigned long)temperatureComfort.votes());
+    drawFitLine(votesLine, 46);
+    drawFitLine(learned ? "Range is an estimate" : "Rate it on dashboard", 57);
+    return;
+  }
+  if (panel == 2) {
+    const bool learned = humidityComfort.votes() >= 5;
+    const ClimateParams defaults = getDefaultClimateParams();
+    const float lo = learned ? humidityComfort.lo() : defaults.hMid - defaults.hHalf;
+    const float hi = learned ? humidityComfort.hi() : defaults.hMid + defaults.hHalf;
+    drawFitLine(learned ? "Humidity estimate" : "Default humidity", 21);
+    char rangeLine[32];
+    snprintf(rangeLine, sizeof(rangeLine), learned ? "Your range: %.0f-%.0f%%" : "Default: %.0f-%.0f%%", lo, hi);
+    drawFitLine(rangeLine, 34);
+    char votesLine[32];
+    if (learned) snprintf(votesLine, sizeof(votesLine), "Votes: %lu", (unsigned long)humidityComfort.votes());
+    else snprintf(votesLine, sizeof(votesLine), "Votes: %lu (learning)", (unsigned long)humidityComfort.votes());
+    drawFitLine(votesLine, 46);
+    drawFitLine(learned ? "Range is an estimate" : "Rate it on dashboard", 57);
+    return;
+  }
+  if (panel == 3) {
+    drawFitLine("Forecast estimate", 22);
+    drawFitLine(pressureForecast, 34);
+    drawFitLine(temperaturePrediction, 48);
+    return;
+  }
+  drawFitLine(insightTitle, 19);
+  char scoreLine[24];
+  if (sensorsOk && isfinite(comfortScore)) snprintf(scoreLine, sizeof(scoreLine), "Comfort estimate: %d", (int)comfortScore);
+  else strlcpy(scoreLine, "Comfort estimate: --", sizeof(scoreLine));
+  drawFitLine(scoreLine, 29);
+  drawFitLine("Dew point estimate", 38);
+  char dewLine[24];
+  if (sensorsOk && isfinite(dewPointC)) snprintf(dewLine, sizeof(dewLine), "%.1f C", dewPointC);
+  else strlcpy(dewLine, "--", sizeof(dewLine));
+  drawFitLine(dewLine, 47);
+  drawFitLine(insightAction, 57);
 }
 void drawKwsPage() {
 #if USE_TFLITE
@@ -1925,13 +3177,16 @@ void drawWeatherCard() {
   display.setFont(NULL); display.setTextColor(OLED_WHITE);
   if (!weather.ok) {
     drawFitLine(cityUpper, 23);
-    char eb[32];
-    if (weather.weatherHttp == 401) snprintf(eb, sizeof(eb), "401 bad API key");
+    char eb[48];
+    if (weather.weatherHttp == -100) snprintf(eb, sizeof(eb), "No city/API key set");
+    else if (weather.weatherHttp == 401) snprintf(eb, sizeof(eb), "401 bad API key");
     else if (weather.weatherHttp == 404) snprintf(eb, sizeof(eb), "404 city not found");
     else if (weather.weatherHttp == 429) snprintf(eb, sizeof(eb), "429 call limit");
-    else if (weather.weatherHttp == HTTP_CODE_OK) snprintf(eb, sizeof(eb), "Weather data unreadable");
+    else if (weather.weatherHttp == HTTP_CODE_OK) snprintf(eb, sizeof(eb), "Data unreadable");
+    else if (weather.weatherHttp == HTTPC_ERROR_CONNECTION_REFUSED) snprintf(eb, sizeof(eb), "Connection refused");
     else if (weather.weatherHttp != 0) snprintf(eb, sizeof(eb), "HTTP %d failed", weather.weatherHttp);
-    else snprintf(eb, sizeof(eb), "Waiting for time sync");
+    else if (!timeSynced) snprintf(eb, sizeof(eb), "Waiting for time sync");
+    else snprintf(eb, sizeof(eb), "Waiting for weather...");
     drawFitLine(eb, 36);
     drawFitLine("Check WiFi, city, API key", 48);
     return;
@@ -1956,82 +3211,42 @@ void drawForecastPage() {
     drawFitLine("Check WEATHER page", 42);
     return;
   }
-  display.drawLine(42, 20, 42, 61, OLED_WHITE); display.drawLine(85, 20, 85, 61, OLED_WHITE);
+  display.drawLine(42, 18, 42, 61, OLED_WHITE); display.drawLine(85, 18, 85, 61, OLED_WHITE);
   for (int i = 0; i < 3; i++) {
     int centerX = i * 43 + 21;
     display.setFont(NULL);
     const char* d = weather.forecast[i].dayName;
-    display.setCursor(centerX - (int)(strlen(d) * 3), 30); display.print(d);
-    display.drawBitmap(centerX - 8, 34, getMiniIcon(weather.forecast[i].iconType), 16, 16, OLED_WHITE);
+    display.setCursor(centerX - (int)(strlen(d) * 3), 18); display.print(d);
+    display.drawBitmap(centerX - 8, 29, getMiniIcon(weather.forecast[i].iconType), 16, 16, OLED_WHITE);
     char tBuf[8]; snprintf(tBuf, sizeof(tBuf), "%d C", weather.forecast[i].temp);
-    int16_t x1, y1; uint16_t w, h;
-    display.setFont(NULL);
-    display.getTextBounds(tBuf, 0, 0, &x1, &y1, &w, &h);
-    display.setCursor(centerX - (int)(w / 2), 57); display.print(tBuf);
+    display.setCursor(centerX - (int)(strlen(tBuf) * 3), 50); display.print(tBuf);
   }
 }
 #endif
-void drawWorldClock() {
-  time_t now;
-  if (timeSynced) time(&now); else now = demoBaseEpoch + millis() / 1000;
-  time_t indEpoch = now + 5 * 3600 + 30 * 60;
-  time_t sydEpoch = now + 11 * 3600;
-  struct tm* it = gmtime(&indEpoch); int i_h = it->tm_hour, i_m = it->tm_min;
-  struct tm* st = gmtime(&sydEpoch); int s_h = st->tm_hour, s_m = st->tm_min;
-  drawHeader("WORLD CLOCK"); display.drawLine(64, 18, 64, 59, OLED_WHITE);
-  char iStr[10], sStr[10]; snprintf(iStr, sizeof(iStr), "%02d:%02d", i_h, i_m); snprintf(sStr, sizeof(sStr), "%02d:%02d", s_h, s_m);
-  display.setFont(NULL); display.setCursor(14, 25); display.print("INDIA"); display.setCursor(5, 43); display.print(iStr);
-  display.setCursor(75, 25); display.print("SYDNEY"); display.setCursor(68, 43); display.print(sStr);
-}
-
 void drawTimerPage() {
-  drawHeader(timerRunning ? "STUDY TIMER" : (isTimerAlarm ? "TIME'S UP!" : "SET TIMER"));
+  drawHeader("TIMER");
   int mins = timerRemainingSec / 60, secs = timerRemainingSec % 60;
   char timeBuf[12];
   snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", mins, secs);
   display.setFont(NULL); display.setTextColor(OLED_WHITE);
-  if (isTimerAlarm) {
-    display.setCursor(4, 29); display.print("Timer complete!");
-    display.setCursor(4, 43); display.print("Press button to stop");
-  }
-  else if (!timerRunning) {
-    display.setCursor(4, 20); display.print("Duration (minutes)");
-    display.setFont(&FreeSansBold9pt7b);
-    int16_t x1, y1; uint16_t w, h;
-    display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &w, &h);
-    int cx = (SCREEN_WIDTH - (int)w) / 2;
-    display.setCursor(cx, 44); display.print(timeBuf);
-    display.setFont(NULL);
-    display.setCursor(2, 47); display.print("Touch+5 Hold:reset");
-    display.setCursor(2, 57); display.print("Btn:start Hold:exit");
-  } else {
-    display.setCursor(2, 20);
-    if (timerRemainingSec < 60) display.print("ALMOST DONE!");
-    else display.print("FOCUSING...");
-    display.setFont(&FreeSansBold9pt7b);
-    int16_t x1, y1; uint16_t w, h;
-    display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &w, &h);
-    int cx = (SCREEN_WIDTH - (int)w) / 2;
-    display.setCursor(cx, 44); display.print(timeBuf);
-    display.setFont(NULL);
-    display.drawRect(14, 48, 100, 6, OLED_WHITE);
-    if (timerDurationSec > 0) {
-      int fill = (int)((float)(timerDurationSec - timerRemainingSec) / timerDurationSec * 96);
-      if (fill < 0) fill = 0;
-      display.fillRect(16, 49, fill, 4, OLED_WHITE);
-    }
-    display.setCursor(2, 57); display.print("Btn:pause Hold:exit");
-  }
+  const char* state = isTimerAlarm ? "TIME UP" : timerRunning ? "RUNNING" :
+                      (timerRemainingSec < timerDurationSec ? "PAUSED" : "READY");
+  display.setCursor(64 - (int)(strlen(state) * 3), 23); display.print(state);
+  display.setFont(&FreeSansBold18pt7b);
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor(max(0, (SCREEN_WIDTH - (int)w) / 2), 57); display.print(timeBuf);
+  display.setFont(NULL);
 }
 
 void drawTimerOverlay() {
   if (!timerRunning || currentPage == PAGE_TIMER) return;
   int mins = timerRemainingSec / 60, secs = timerRemainingSec % 60;
   char buf[8]; snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
-  int w = 36, h = 12;
+  int w = 58, h = 12;
   int x = SCREEN_WIDTH - w - 2, y = 2;
   display.fillRect(x, y, w, h, OLED_BLACK); display.drawRect(x, y, w, h, OLED_WHITE);
-  display.setFont(NULL); display.setTextColor(OLED_WHITE); display.setCursor(x + 3, y + 2); display.print(buf);
+  display.setFont(NULL); display.setTextColor(OLED_WHITE); display.setCursor(x + 3, y + 2); display.print("RUN "); display.print(buf);
 }
 
 void playBootAnimation() {
@@ -2045,10 +3260,6 @@ void playBootAnimation() {
   unsigned long start = millis();
   while (millis() - start < 1200) {  delay(20); }
 }
-
-
-// --- End DeskPalDisplay.h ---
-
 
 void setup() {
   Serial.begin(115200);
@@ -2074,16 +3285,22 @@ void setup() {
   display.setTextColor(OLED_WHITE);
   bool forceConfig = false;
   for (unsigned long t = millis(); millis() - t < CONFIG_HOLD_MS;) {
-    
     if (digitalRead(TOUCH_PIN) == HIGH) { forceConfig = true; break; }
     delay(80);
   }
   loadConfig();
+  initializeComfortLearning();
 #if ENABLE_WEATHER
+  printPendingNetworkRestartReason();
   loadTelemetryToken();
+  loadPairCode();
 #endif
 #if ENABLE_WEATHER
-  if (forceConfig) { startConfigPortal(); return; }
+  if (forceConfig) {
+    bmpOk = bme.begin() || bme.begin(0x76);
+    Serial.println(bmpOk ? "BME280 OK" : "BME280 NOT FOUND - check wiring!");
+    startConfigPortal(); return;
+  }
 #endif
   leftEye.init(18, 14, 36, 36); rightEye.init(74, 14, 36, 36);
   playBootAnimation();
@@ -2093,19 +3310,19 @@ void setup() {
     for (int i = 0; i < 5; i++) { bme.readTemperature(); bme.readHumidity(); bme.readPressure(); delay(40); }
     Serial.println("=== TEMP CALIBRATION ===");
     Serial.print("Raw: "); Serial.println(bme.readTemperature());
-    Serial.print("Adj: "); Serial.println(bme.readTemperature() + TEMP_OFFSET);
+    Serial.print("Adj: "); Serial.println(bme.readTemperature() + tempOffsetC);
   }
   lastInteraction = millis(); readSensors(); generateInsights(); batteryPct = readBatteryPct();
   lastSensorRead = millis(); lastInsightGen = millis(); lastPageSwitch = millis();
   initMic();
 #if ENABLE_WEATHER
   if (wifiSsid.length() > 0) {
-    wifiWant = true; WiFi.mode(WIFI_STA); WiFi.setSleep(false); WiFi.setAutoReconnect(true); WiFi.persistent(false);
-    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str()); wifiRetryAt = millis() + 30000;
-    Serial.println("WiFi: connecting in background...");
+    wifiWant = true; WiFi.mode(WIFI_STA); WiFi.setSleep(false); WiFi.setAutoReconnect(false); WiFi.persistent(false);
+    startWifiConnection(millis());
+    Serial.println("Wi-Fi connecting in background");
   } else { Serial.println("WiFi: no credentials saved (hold touch @ boot to configure)"); }
 #endif
-  buzzBoot(); Serial.println("{\"type\":\"decision\",\"msg\":\"Boot complete\"}");
+  buzzBoot(); emitDecision("Boot complete");
 }
 
 void updateTimer() {
@@ -2119,6 +3336,7 @@ void updateTimer() {
         timerLock = false;
         isTimerAlarm = true;
         excitedUntil = now + 5000;
+        emitEvent("Timer", "Timer finished");
       }
     }
   }
@@ -2139,17 +3357,29 @@ void loop() {
 #if ENABLE_WEATHER
     configServer.handleClient();
 #endif
+    unsigned long configNow = millis();
+    if (configNow - lastSensorRead > 2000) { readSensors(); lastSensorRead = configNow; }
+    if (configNow - lastInsightGen > 10000) { generateInsights(); lastInsightGen = configNow; }
+    updateTimer(); updateBuzzer(); checkAlertThresholds(); computeMood(); emitDashboardTelemetry();
     return;
   }
   unsigned long now = millis();
+  static unsigned long lastMiniAIIntervalAt = 0;
+  if ((currentPage == PAGE_INSIGHTS || currentPage == PAGE_EYES) &&
+      now - lastMiniAIIntervalAt >= 60000UL) {
+    lastMiniAIIntervalAt = now;
+    triggerMiniAI();
+  }
   if (OLED_TIMEOUT_MS > 0 && !screenOff && now - lastInteraction > OLED_TIMEOUT_MS) { DISPLAY_OFF(); screenOff = true; }
   handleInputs(); liftCheck(); processAudio(); updateTimer(); updateBuzzer();
 #if ENABLE_WEATHER
   wifiTick(now);
+  mqttTick(now);
   if (telemetryServerStarted) configServer.handleClient();
 #endif
   if (now - lastSensorRead > 2000) { readSensors(); lastSensorRead = now; }
   if (now - lastInsightGen > 10000) { generateInsights(); lastInsightGen = now; }
+  checkAlertThresholds();
 #if ENABLE_WEATHER
   if (wifiOn && timeSynced && city.length() > 0 && apiKey.length() > 0) {
     WeatherSnapshot weather = getWeatherSnapshot();
@@ -2170,7 +3400,6 @@ void loop() {
     case PAGE_WEATHER: drawWeatherCard(); break;
     case PAGE_FORECAST: drawForecastPage(); break;
 #endif
-    case PAGE_WORLD: drawWorldClock(); break;
     case PAGE_TIMER: drawTimerPage(); break;
   }
   drawTimerOverlay();

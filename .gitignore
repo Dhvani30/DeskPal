@@ -18,4 +18,11 @@ Desktop.ini
 *.swp
 *.tmp
 
+.env
 /Additional_recordings
+
+# Optional DeskPal cloud service
+cloud/node_modules/
+cloud/.env
+cloud/npm-debug.log*
+/DeskPal/DeskPalSecrets.h
