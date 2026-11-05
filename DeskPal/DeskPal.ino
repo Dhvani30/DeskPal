@@ -1,8 +1,6 @@
 // ==================================================
 // DeskPal - ESP32 desktop companion firmware
 // ==================================================
-// The keyword model is not bundled. The mic reports levels only by default;
-// loud sounds are deliberately not treated as a wake phrase.
 // See README.md and docs/HARDWARE_TEST_CHECKLIST.md for setup and release gates.
 // ==================================================
 
@@ -10,13 +8,18 @@
 #include <Adafruit_GFX.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 #include <Fonts/FreeSansBold9pt7b.h>
-#include <Fonts/FreeSans9pt7b.h>
 #include <Preferences.h>
 #include "time.h"
 #include <math.h>
-#include "driver/i2s.h"
 #include <esp_task_wdt.h>
+#ifndef ENABLE_MIC
+#define ENABLE_MIC 0
+#endif
+#if !defined(ENABLE_MIC) || ENABLE_MIC
+#include "driver/i2s.h"
+#endif
 #include "comfort_learner.h"
+#include "OledTextFit.h"
 
 #if defined(__has_include)
 #if __has_include("DeskPalSecrets.h")
@@ -73,25 +76,6 @@ const unsigned char bmp_anger[] PROGMEM = {0x00,0x00,0x11,0x10,0x2a,0x90,0x44,0x
 const unsigned char bmp_music[] PROGMEM = {0x01,0x80,0x01,0x80,0x01,0x80,0x01,0xc0,0x01,0xe0,0x03,0xf0,0x07,0xe0,0x0f,0xc0,0x07,0x80,0x03,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
 const unsigned char bmp_snow[] PROGMEM = {0x99,0x5A,0x3C,0xFF,0xFF,0x3C,0x5A,0x99};
 
-#ifndef USE_TFLITE
-#define USE_TFLITE 0
-#endif
-#ifndef KWS_MODEL_INTEGRATED
-#define KWS_MODEL_INTEGRATED 0
-#endif
-#define KWS_CONFIDENCE_FLOOR 0.75f
-#define KWS_LABEL_REJECT -1
-#define KWS_LABEL_WAKE 0
-#define KWS_LABEL_START_TIMER 1
-#define KWS_LABEL_STOP_TIMER 2
-#if USE_TFLITE
-#define DESKPAL_KWS_ADAPTER_READY 0
-int classifyKeywordEdge();
-#if !KWS_MODEL_INTEGRATED || !DESKPAL_KWS_ADAPTER_READY
-#error "USE_TFLITE requires an exported Edge Impulse model, adapter implementation, and KWS_MODEL_INTEGRATED=1."
-#endif
-#endif
-
 #ifndef USE_ESP32_S3
 #define USE_ESP32_S3 0
 #endif
@@ -101,10 +85,7 @@ int classifyKeywordEdge();
 #define TOUCH_PIN 7
 #define BUZZER_PIN 6
 #define SWITCH_PIN 5
-#define BTN_MICMUTE_PIN 4
-#define MIC_SCK 15
-#define MIC_WS 16
-#define MIC_SD 17
+#define BTN_NAV_PIN 4
 #define BATT_PIN 1
 #else
 #define SDA_PIN 21
@@ -112,16 +93,31 @@ int classifyKeywordEdge();
 #define TOUCH_PIN 32
 #define BUZZER_PIN 27
 #define SWITCH_PIN 26
-#define BTN_MICMUTE_PIN 25
-#define MIC_SCK 18
-#define MIC_WS 19
-#define MIC_SD 35
+#define BTN_NAV_PIN 25
 #define BATT_PIN 34
 #endif
 
-#ifndef ENABLE_MIC
-#define ENABLE_MIC 1
+// INMP441 wiring (classic ESP32): VDD->3V3, GND->GND, L/R->GND, SCK->GPIO18, WS->GPIO19, SD->GPIO35
+#if USE_ESP32_S3
+#define MIC_SCK 15
+#define MIC_WS 16
+#define MIC_SD 17
+#else
+#define MIC_SCK 18
+#define MIC_WS 19
+#define MIC_SD 35
 #endif
+// Loud-noise reaction tuning. Levels are 24-bit sample RMS (full scale about 8,400,000).
+// Set MIC_DEBUG to 1 and watch the Serial Monitor to tune these on your desk.
+#define MIC_DEBUG 0
+#define MIC_SCARE_ABS        250000.0f   // minimum level that can scare it (clap/door slam, not talking)
+#define MIC_SCARE_JUMP       5.0f        // must be this many times louder than the last ~0.5 s
+#define MIC_SCARE_FLOOR_MULT 6.0f        // and this many times the slow room-noise level
+#define MIC_CURIOUS_ABS      40000.0f    // a smaller sound makes it curious
+#define MIC_CURIOUS_FLOOR_MULT 3.0f
+#define MIC_SCARE_COOLDOWN_MS 10000UL
+#define MIC_CURIOUS_COOLDOWN_MS 20000UL
+#define MIC_MIN_FLOOR 150.0f
 #ifndef ENABLE_BATTERY
 #define ENABLE_BATTERY 0
 #endif
@@ -130,11 +126,11 @@ int classifyKeywordEdge();
 #define SCREEN_HEIGHT 64
 #define TEMP_OFFSET -1.5f
 #define NEGLECT_MS 120000UL
-#define LIFT_THRESHOLD 0.10f
+#define LIFT_THRESHOLD 0.05f   // hPa drop within ~3 s (about 40 cm); raise if it false-triggers
 #define PET_LIMIT 8
 #define PET_WINDOW_MS 15000UL
-#define RUB_WINDOW_MS 1200UL
-#define RUB_MIN_TRANSITIONS 4
+#define RUB_WINDOW_MS 1500UL
+#define RUB_MIN_TRANSITIONS 3
 #define BATT_LOW_PCT 15
 
 #define BTN_LONG_PRESS_MS        1500UL
@@ -142,12 +138,23 @@ int classifyKeywordEdge();
 #define OLED_TIMEOUT_MS          0UL
 #define TIMER_MIN_MINS           10
 
+#ifndef LIFT_DEBUG
+#define LIFT_DEBUG 0
+#endif
+#define LIFT_SAMPLE_MS 250UL
+#define LIFT_RING 16
+#define LIFT_COOLDOWN_MS 8000UL
+#define BASELINE_TAU_S 7200.0f   // "normal for this room" adapts over about 2 hours
+
 #define CLIMATE_TEMPERATE 0
 #define CLIMATE_COASTAL 1
 #define CLIMATE_DESERT 2
 #define CLIMATE_MOUNTAIN 3
+#ifndef DEFAULT_CLIMATE_ZONE
+#define DEFAULT_CLIMATE_ZONE CLIMATE_COASTAL   // used until you pick a zone in the setup page
+#endif
 
-#define MOOD_COUNT 11
+#define MOOD_COUNT 17
 #define MOOD_NORMAL 0
 #define MOOD_HAPPY 1
 #define MOOD_EXCITED 2
@@ -159,6 +166,12 @@ int classifyKeywordEdge();
 #define MOOD_COLD 8
 #define MOOD_SAD 9
 #define MOOD_SUSPICIOUS 10
+#define MOOD_BORED 11
+#define MOOD_CURIOUS 12
+#define MOOD_HOT 13
+#define MOOD_DIZZY 14
+#define MOOD_PLAYFUL 15
+#define MOOD_LONELY 16
 
 #define PAGE_EYES 0
 #define PAGE_CLOCK 1
@@ -166,8 +179,7 @@ int classifyKeywordEdge();
 #define PAGE_FORECAST 3
 #define PAGE_ENV 4
 #define PAGE_INSIGHTS 5
-#define PAGE_KWS 6
-#define PAGE_TIMER 7
+#define PAGE_TIMER 6
 
 #define SENSOR_GRACE_MS 8000UL
 #define SENSOR_RECOVERY_FAILS 5
@@ -249,8 +261,8 @@ volatile bool weatherFetchInFlight = false;
 #endif
 
 Eye leftEye, rightEye;
-bool micReady = false;
 bool currentTm(struct tm* t);
+void drawClippedPixel(int x, int y, int rx, int ry, int rw, int rh, uint16_t c);
 
 #if ENABLE_WEATHER
 void sendTelemetryApi();
@@ -275,6 +287,13 @@ int currentPage = 0;
 bool highBrightness = true;
 bool quietMode = false;
 bool micMuted = false;
+uint8_t externalSoundLevel = 0;
+bool externalSoundHasSample = false;
+bool externalSoundRiseLatched = false;
+float externalSoundBaseline = NAN;
+unsigned long externalSoundUpdatedAt = 0;
+unsigned long lastExternalScareAt = 0, lastExternalCuriousAt = 0;
+unsigned long lastExternalSoundCommandAt = 0;
 unsigned long lastPageSwitch = 0;
 
 bool lastTouch = false;
@@ -302,10 +321,16 @@ bool watchdogActive = false;
 int currentMood = MOOD_NORMAL;
 int manualMood = -1;
 unsigned long manualMoodUntil = 0;
-unsigned long kwsActiveUntil = 0;
 unsigned long anomalyUntil = 0;
 unsigned long lastInteraction = 0;
 unsigned long pettedUntil = 0, annoyedUntil = 0, scaredUntil = 0, excitedUntil = 0;
+unsigned long dizzyUntil = 0, playfulUntil = 0, curiousUntil = 0;
+float tempBaseline = NAN, humBaseline = NAN;
+unsigned long lastBaselineAt = 0;
+int liftCount = 0;
+unsigned long firstLiftAt = 0;
+int passiveMood = MOOD_NORMAL;
+unsigned long passiveMoodSince = 0;
 int petCount = 0;
 unsigned long petWindowStart = 0;
 bool neglectSleepy = false;
@@ -401,8 +426,6 @@ const time_t demoBaseEpoch = 1767258000;
 
 int climateZone = CLIMATE_TEMPERATE;
 float batteryPct = NAN;
-float micRms = 0.0f;
-float micNoiseFloor = 200.0f;
 
 // Sampling runs every >2 s in loop(), with about 150 ms of sensor averaging.
 // Keep one hour plus margin so pressure trends can use a genuine 1 h baseline.
@@ -417,8 +440,8 @@ float tempTrendCPerHr = NAN, humTrendPerHr = NAN, pressTrendHpaPerHr = NAN;
 char pressureForecast[24] = "Learning";
 char temperaturePrediction[32] = "Temp estimate: --";
 char inferred[32] = "None";
-bool inferredWindowLatched = false, inferredCoolingLatched = false, inferredOccupancyLatched = false;
-unsigned long inferredWindowAt = 0, inferredCoolingAt = 0, inferredOccupancyAt = 0;
+bool inferredWindowLatched = false, inferredCoolingLatched = false;
+unsigned long inferredWindowAt = 0, inferredCoolingAt = 0;
 static const unsigned long INFERENCE_COOLDOWN_MS = 600000UL;
 
 struct DeviceEvent {
@@ -450,20 +473,10 @@ bool timerLock = false;
 unsigned long timerLastTick = 0;
 bool isTimerAlarm = false;
 
-bool isListeningForCommand = false;
-unsigned long listenStartTime = 0;
-unsigned long lastKwsActionAt = 0;
-unsigned long lastCmdSyllableAt = 0;
-int commandSyllables = 0;
-bool cmdInSyllable = false;
-
-char aiResponse[96] = "";
-unsigned long aiResponseStart = 0;
-bool isAiResponding = false;
-
 BuzzerStep buzzQueue[6];
 int buzzQueueLen = 0;
 int buzzQueueIdx = -1;
+uint32_t buzzerStarts = 0;
 bool buzzPhaseOn = false;
 unsigned long buzzPhaseStart = 0;
 
@@ -471,15 +484,10 @@ unsigned long lastSaccade = 0;
 unsigned long saccadeInterval = 3000;
 float breathVal = 0;
 
-int32_t i2sBuf[256];
-enum KwsState { KWS_IDLE, KWS_SYL1, KWS_GAP };
-KwsState kwsState = KWS_IDLE;
-unsigned long kwsSyl1Time = 0;
-float kwsBars[16];
-
 const char* MOOD_NAMES[MOOD_COUNT] = {
   "NORMAL", "HAPPY", "EXCITED", "LOVE", "ANGRY", "SCARED",
-  "SURPRISED", "SLEEPY", "COLD", "SAD", "SUSPICIOUS"
+  "SURPRISED", "SLEEPY", "COLD", "SAD", "SUSPICIOUS",
+  "BORED", "CURIOUS", "HOT", "DIZZY", "PLAYFUL", "LONELY"
 };
 const char* comfortNames[] = { "COMFORTABLE", "TOO HOT", "TOO COLD", "TOO HUMID", "TOO DRY" };
 
@@ -522,10 +530,8 @@ void sendDeviceEventHistory(uint32_t afterId) {
 void emitDecision(const char* message) {
   const char* source = "System";
   if (strncmp(message, "MiniAI", 6) == 0) source = "Mini-AI";
-  else if (strncmp(message, "Wake word", 9) == 0) source = "KWS";
   else if (strncmp(message, "Anomaly", 7) == 0 || strstr(message, "changed quickly")) source = "Anomaly";
   else if (strncmp(message, "Picked up", 9) == 0) source = "Lift";
-  else if (strncmp(message, "Mic", 3) == 0) source = "Mic";
   else if (strncmp(message, "Over-petted", 11) == 0 || strncmp(message, "Long cuddle", 11) == 0) source = "Touch";
   else if (strncmp(message, "Timer", 5) == 0 || strncmp(message, "Voice command", 13) == 0) source = "Timer";
   emitEvent(source, message);
@@ -734,43 +740,34 @@ void updateEventInference(unsigned long now) {
   if (!inferredCoolingLatched && coolingLikely)
     emitInferredEvent("Cooling likely on", "AC or cooling likely turned on", now, inferredCoolingAt, inferredCoolingLatched);
 
-  bool occupancyLikely = false, occupancyRelaxed = false;
-  const float micGate = micNoiseFloor * 2.5f + 250.0f;
-  const bool elevatedMic = micReady && !micMuted && micRms >= micGate;
-  if (have10m) {
-    const float dt = envTemp - temp10m, dh = envHum - hum10m;
-    occupancyLikely = dh >= 3.0f && dt >= 0.3f && elevatedMic;
-    occupancyRelaxed = dh >= 1.5f && dt >= 0.15f && elevatedMic;
-  }
-  if (inferredOccupancyLatched && !occupancyRelaxed) inferredOccupancyLatched = false;
-  if (!inferredOccupancyLatched && occupancyLikely)
-    emitInferredEvent("Person likely present", "Someone is likely in the room", now, inferredOccupancyAt, inferredOccupancyLatched);
 }
 
 void clampEyeTargets(Eye& e) {
   e.targetW = cf(e.targetW, 8.0f, 56.0f);
   e.targetH = cf(e.targetH, 6.0f, 48.0f);
-  e.targetX = cf(e.targetX, 0.0f, (float)(SCREEN_WIDTH) - e.targetW);
-  e.targetY = cf(e.targetY, 0.0f, (float)(SCREEN_HEIGHT) - e.targetH);
+  e.targetX = cf(e.targetX, 1.0f, (float)(SCREEN_WIDTH - 1) - e.targetW);
+  e.targetY = cf(e.targetY, 0.0f, (float)(SCREEN_HEIGHT - 1) - e.targetH);
 }
 void clampEyeState(Eye& e) {
-  e.w = cf(e.w, 4.0f, (float)SCREEN_WIDTH);
-  e.h = cf(e.h, 4.0f, (float)SCREEN_HEIGHT);
-  e.x = cf(e.x, 0.0f, (float)SCREEN_WIDTH - e.w);
-  e.y = cf(e.y, 0.0f, (float)SCREEN_HEIGHT - e.h);
-}
-bool clipSegToRect(int& x0, int& y0, int& x1, int& y1, int rx, int ry, int rw, int rh) {
-  x0 = ci(x0, rx, rx + rw - 1); x1 = ci(x1, rx, rx + rw - 1);
-  y0 = ci(y0, ry, ry + rh - 1); y1 = ci(y1, ry, ry + rh - 1);
-  x0 = ci(x0, 0, SCREEN_WIDTH - 1); x1 = ci(x1, 0, SCREEN_WIDTH - 1);
-  y0 = ci(y0, 0, SCREEN_HEIGHT - 1); y1 = ci(y1, 0, SCREEN_HEIGHT - 1);
-  return !(x0 == x1 && y0 == y1);
+  e.w = cf(e.w, 4.0f, (float)(SCREEN_WIDTH - 2));
+  e.h = cf(e.h, 4.0f, (float)(SCREEN_HEIGHT - 1));
+  e.x = cf(e.x, 1.0f, (float)(SCREEN_WIDTH - 1) - e.w);
+  e.y = cf(e.y, 0.0f, (float)(SCREEN_HEIGHT - 1) - e.h);
 }
 void drawClippedLine(int x0, int y0, int x1, int y1, int rx, int ry, int rw, int rh, uint16_t c) {
-  if (clipSegToRect(x0, y0, x1, y1, rx, ry, rw, rh)) display.drawLine(x0, y0, x1, y1, c);
+  int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+  int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+  int error = dx + dy;
+  for (;;) {
+    drawClippedPixel(x0, y0, rx, ry, rw, rh, c);
+    if (x0 == x1 && y0 == y1) break;
+    const int twiceError = 2 * error;
+    if (twiceError >= dy) { error += dy; x0 += sx; }
+    if (twiceError <= dx) { error += dx; y0 += sy; }
+  }
 }
 void drawClippedPixel(int x, int y, int rx, int ry, int rw, int rh, uint16_t c) {
-  if (x >= rx && x < rx + rw && y >= ry && y < ry + rh && x >= 0 && x < SCREEN_WIDTH && y >= 0 && y < SCREEN_HEIGHT)
+  if (x >= rx && x < rx + rw && y >= ry && y < ry + rh && x >= 1 && x <= SCREEN_WIDTH - 2 && y >= 0 && y <= SCREEN_HEIGHT - 2)
     display.drawPixel(x, y, c);
 }
 void drawClippedFillCircle(int cx, int cy, int r, int rx, int ry, int rw, int rh, uint16_t c) {
@@ -780,8 +777,9 @@ void drawClippedFillCircle(int cx, int cy, int r, int rx, int ry, int rw, int rh
         drawClippedPixel(cx + dx, cy + dy, rx, ry, rw, rh, c);
 }
 void drawClippedBitmap(int bx, int by, const unsigned char* bmp, int bw, int bh, uint16_t c) {
-  bx = ci(bx, 0, SCREEN_WIDTH - bw);
-  by = ci(by, 0, SCREEN_HEIGHT - bh);
+  if (bw < 1 || bh < 1 || bw > SCREEN_WIDTH - 2 || bh > SCREEN_HEIGHT - 1) return;
+  bx = ci(bx, 1, SCREEN_WIDTH - 1 - bw);
+  by = ci(by, 0, SCREEN_HEIGHT - 1 - bh);
   display.drawBitmap(bx, by, bmp, bw, bh, c);
 }
 void drawFatArc(int cx, int cy, int r, int a0, int a1, int thick, int rx, int ry, int rw, int rh) {
@@ -828,14 +826,61 @@ bool parseAlertFormValue(const String& text, float& value) {
   return end != begin && *end == '\0' && isfinite(value);
 }
 
+// ---- Saved Wi-Fi networks (up to 5). DeskPal scans and joins the strongest one in range.
+#define WIFI_MAX_KNOWN 5
+#ifndef AUTO_PORTAL_WHEN_NO_WIFI
+#define AUTO_PORTAL_WHEN_NO_WIFI 1   // open the setup page automatically when no network is saved
+#endif
+struct KnownNetwork { String ssid; String pass; };
+KnownNetwork knownNets[WIFI_MAX_KNOWN];
+int knownNetCount = 0;
+
+void insertKnownFront(const String& ssid, const String& pass) {
+  if (ssid.isEmpty()) return;
+  int at = -1;
+  for (int i = 0; i < knownNetCount; ++i) if (knownNets[i].ssid == ssid) { at = i; break; }
+  if (at < 0) {
+    if (knownNetCount < WIFI_MAX_KNOWN) knownNetCount++;
+    at = knownNetCount - 1;           // overwrite the oldest when full
+  }
+  for (int i = at; i > 0; --i) knownNets[i] = knownNets[i - 1];
+  knownNets[0].ssid = ssid;
+  knownNets[0].pass = pass;
+}
+
+void readKnownNetworksFromOpenPrefs() {
+  knownNetCount = 0;
+  for (int i = 0; i < WIFI_MAX_KNOWN; ++i) {
+    char ks[8], kp[8];
+    snprintf(ks, sizeof(ks), "k%ds", i);
+    snprintf(kp, sizeof(kp), "k%dp", i);
+    String name = prefs.getString(ks, "");
+    if (name.isEmpty()) continue;
+    knownNets[knownNetCount].ssid = name;
+    knownNets[knownNetCount].pass = prefs.getString(kp, "");
+    knownNetCount++;
+  }
+  // Older firmware stored a single ssid/pass pair; carry it over.
+  String legacySsid = prefs.getString("ssid", "");
+  if (!legacySsid.isEmpty()) {
+    bool known = false;
+    for (int i = 0; i < knownNetCount; ++i) if (knownNets[i].ssid == legacySsid) known = true;
+    if (!known) insertKnownFront(legacySsid, prefs.getString("pass", ""));
+  }
+  if (knownNetCount == 0 && strlen(DESKPAL_WIFI_SSID) > 0) insertKnownFront(DESKPAL_WIFI_SSID, DESKPAL_WIFI_PASS);
+}
+
 void loadConfig() {
   if (!prefs.begin("deskpal", true)) {
     Serial.println("Preferences unavailable; using safe defaults");
     return;
   }
-  wifiSsid = prefs.getString("ssid", "");
-  wifiPass = prefs.getString("pass", "");
-  if (strlen(DESKPAL_WIFI_SSID) > 0) { wifiSsid = DESKPAL_WIFI_SSID; wifiPass = DESKPAL_WIFI_PASS; }
+  readKnownNetworksFromOpenPrefs();
+  wifiSsid = knownNetCount > 0 ? knownNets[0].ssid : String("");
+  wifiPass = knownNetCount > 0 ? knownNets[0].pass : String("");
+  // BUGFIX: these two were read after prefs.end(), so they always returned the defaults.
+  climateZone = prefs.getInt("climate", DEFAULT_CLIMATE_ZONE);
+  tempOffsetC = prefs.getFloat("tempOffset", TEMP_OFFSET);
   apiKey = prefs.getString("apikey", "");
   if (strlen(DESKPAL_WEATHER_API_KEY) > 0) apiKey = DESKPAL_WEATHER_API_KEY;
   city = prefs.getString("city", "");
@@ -864,13 +909,11 @@ void loadConfig() {
     prefs.end();
   }
 
-  climateZone = prefs.getInt("climate", CLIMATE_TEMPERATE);
-  tempOffsetC = prefs.getFloat("tempOffset", TEMP_OFFSET);
   if (!isfinite(tempOffsetC) || tempOffsetC < -10.0f || tempOffsetC > 10.0f) tempOffsetC = TEMP_OFFSET;
   
   if (climateZone < CLIMATE_TEMPERATE || climateZone > CLIMATE_MOUNTAIN) {
-    climateZone = CLIMATE_TEMPERATE;
-    Serial.println("Invalid stored climate; reset to temperate");
+    climateZone = DEFAULT_CLIMATE_ZONE;
+    Serial.println("Invalid stored climate; reset to default zone");
   }
   refreshCityUpper();
 }
@@ -914,6 +957,24 @@ static bool putStr(const char* key, const String& value) {
   return prefs.putString(key, value) > 0 || value.length() == 0;
 }
 
+bool saveKnownNetworks() {
+  if (!prefs.begin("deskpal", false)) return false;
+  bool ok = true;
+  for (int i = 0; i < WIFI_MAX_KNOWN; ++i) {
+    char ks[8], kp[8];
+    snprintf(ks, sizeof(ks), "k%ds", i);
+    snprintf(kp, sizeof(kp), "k%dp", i);
+    if (i < knownNetCount) ok = putStr(ks, knownNets[i].ssid) && putStr(kp, knownNets[i].pass) && ok;
+    else { prefs.remove(ks); prefs.remove(kp); }
+  }
+  prefs.end();
+  return ok;
+}
+bool addKnownNetwork(const String& ssid, const String& pass) {
+  insertKnownFront(ssid, pass);
+  return saveKnownNetworks();
+}
+
 bool saveConfig(const String& s, const String& p, const String& ak, const String& cty, const String& ctry, const String& tz, int cl,
                 float tmax, float tmin, float hmax) {
   if (!prefs.begin("deskpal", false)) return false;
@@ -926,6 +987,7 @@ bool saveConfig(const String& s, const String& p, const String& ak, const String
             prefs.putFloat("alertTmin", tmin) > 0 &&
             prefs.putFloat("alertHmax", hmax) > 0;
   prefs.end();
+  if (ok) addKnownNetwork(s, p);
   return ok;
 }
 
@@ -945,6 +1007,13 @@ String htmlEscape(const String& value) {
   return escaped;
 }
 
+String savedNetworksText() {
+  if (knownNetCount == 0) return String("none yet");
+  String out;
+  for (int i = 0; i < knownNetCount; ++i) { if (i) out += ", "; out += htmlEscape(knownNets[i].ssid); }
+  return out;
+}
+
 void handleConfigRoot() {
   prefs.begin("deskpal", true);
   String sS = htmlEscape(prefs.getString("ssid", ""));
@@ -952,7 +1021,7 @@ void handleConfigRoot() {
   String sT = htmlEscape(prefs.getString("country", ""));
   String sZ = htmlEscape(prefs.getString("tz", "IST-5:30")); 
   
-  int cl = prefs.getInt("climate", 0);
+  int cl = prefs.getInt("climate", DEFAULT_CLIMATE_ZONE);
   float tmax = alertTmax;
   float tmin = alertTmin;
   float hmax = alertHmax;
@@ -967,6 +1036,7 @@ h1{color:#5ba3f5;}input,select{width:100%;padding:10px;margin:6px 0;border:1px s
 button{width:100%;padding:12px;background:#3498db;color:#fff;border:none;border-radius:6px;font-size:16px;cursor:pointer;margin-top:16px;}
 label{display:block;margin-top:12px;color:#8ab4e8;font-size:14px;}small{display:block;color:#9bb5d3;margin:0 0 6px;}</style></head><body>
 <h1>DeskPal Setup</h1><form action="/save" method="POST">
+<p><small>Saved Wi-Fi networks (up to 5): )rawliteral" + savedNetworksText() + R"rawliteral(. Saving a new name adds it; DeskPal joins the strongest saved network in range.</small></p>
 <p>Dashboard pairing code: <code>)rawliteral" + String(pairCode) + R"rawliteral(</code></p>
 <p>Dashboard access token (keep private): <code>)rawliteral" + String(telemetryToken) + R"rawliteral(</code></p>
 <label>WiFi SSID</label><input name="ssid" value=")rawliteral" + sS + R"rawliteral(">
@@ -1016,7 +1086,9 @@ void handleConfigSave() {
   }
   if (pass.isEmpty() || key.isEmpty()) {
     prefs.begin("deskpal", true);
-    if (pass.isEmpty()) pass = prefs.getString("pass", "");
+    if (pass.isEmpty()) {
+      for (int i = 0; i < knownNetCount; ++i) if (knownNets[i].ssid == ssid) pass = knownNets[i].pass;
+    }
     if (key.isEmpty()) key = prefs.getString("apikey", "");
     prefs.end();
   }
@@ -1072,12 +1144,13 @@ void startConfigPortal() {
   });
   configServer.begin();
   telemetryServerStarted = true;
-  display.clearDisplay(); display.setFont(NULL);
-  display.setTextColor(OLED_WHITE); display.setCursor(0, 0);
-  display.print("Config mode\n\nConnect to:\n");
-  display.print(ssid);
-  display.print("\nPIN: "); display.print(pass);
-  display.print("\nOpen 192.168.4.1");
+  display.clearDisplay(); display.setTextColor(OLED_WHITE);
+  drawOledTextFit(display, "Config mode", 1, 0, nullptr, 126);
+  drawOledTextFit(display, "Connect to:", 1, 8, nullptr, 126);
+  drawOledTextFit(display, ssid, 1, 16, nullptr, 126);
+  drawOledTextFit(display, "PIN:", 1, 24, nullptr, 126);
+  drawOledTextFit(display, pass, 1, 32, nullptr, 126);
+  drawOledTextFit(display, "Open 192.168.4.1", 1, 40, nullptr, 126);
   display.display();
 }
 #endif
@@ -1085,6 +1158,7 @@ void startConfigPortal() {
 void queueBuzz(const BuzzerStep* steps, int n) {
   if (quietMode) return;
   if (n > 6) n = 6;
+  buzzerStarts++;
   for (int i = 0; i < n; i++) buzzQueue[i] = steps[i];
   buzzQueueLen = n;
   buzzQueueIdx = 0;
@@ -1116,13 +1190,12 @@ void updateBuzzer() {
     }
   }
 }
-void buzzTap()    { BuzzerStep s[] = {{25, 0}}; queueBuzz(s, 1); }
-void buzzAlert()  { BuzzerStep s[] = {{90, 90}, {90, 0}}; queueBuzz(s, 2); }
-void buzzKws()    { BuzzerStep s[] = {{60, 70}, {60, 70}, {140, 0}}; queueBuzz(s, 3); }
-void buzzHappy()  { BuzzerStep s[] = {{40, 50}, {70, 0}}; queueBuzz(s, 2); }
-void buzzGrumble(){ BuzzerStep s[] = {{150, 0}}; queueBuzz(s, 1); }
-void buzzScared() { BuzzerStep s[] = {{30, 40}, {30, 40}, {30, 0}}; queueBuzz(s, 3); }
-void buzzBoot()   { BuzzerStep s[] = {{60, 60}, {60, 60}, {120, 0}}; queueBuzz(s, 3); }
+void buzzTap()    { BuzzerStep s[] = {{100, 0}}; queueBuzz(s, 1); }
+void buzzAlert()  { BuzzerStep s[] = {{150, 100}, {150, 0}}; queueBuzz(s, 2); }
+void buzzHappy()  { BuzzerStep s[] = {{100, 80}, {160, 0}}; queueBuzz(s, 2); }
+void buzzGrumble(){ BuzzerStep s[] = {{220, 0}}; queueBuzz(s, 1); }
+void buzzScared() { BuzzerStep s[] = {{70, 60}, {70, 60}, {100, 0}}; queueBuzz(s, 3); }
+void buzzBoot()   { BuzzerStep s[] = {{100, 80}, {100, 80}, {180, 0}}; queueBuzz(s, 3); }
 
 bool recordComfortVote(bool humidity, ComfortLearner::Label label) {
   if (!comfortLearnersReady || !sensorsOk || !isfinite(envTemp) || !isfinite(envHum) ||
@@ -1149,8 +1222,11 @@ bool recordComfortVote(bool humidity, ComfortLearner::Label label) {
   lastComfortMutationAt = now;
   lastComfortTempUpdated = updateTemperature;
   lastComfortHumUpdated = updateHumidity;
-  manualMood = MOOD_HAPPY;
-  manualMoodUntil = now + 2000UL;
+  // React to what the person just said instead of always smiling.
+  if (label == ComfortLearner::PERFECT) manualMood = MOOD_HAPPY;
+  else if (label == ComfortLearner::HOT) manualMood = humidity ? MOOD_SAD : MOOD_HOT;
+  else manualMood = humidity ? MOOD_SUSPICIOUS : MOOD_COLD;
+  manualMoodUntil = now + 4000UL;
   buzzTap();
   char message[96];
   snprintf(message, sizeof(message), "Learned: %.1f-%.1f C (%lu votes)",
@@ -1538,58 +1614,238 @@ void readSensors() {
   }
   if (millis() - lastPressSample > 60000) { pressHourAgo = envPress; lastPressSample = millis(); }
 }
+#if ENABLE_MIC
+// ---- Microphone: level only. Nothing is recorded or stored.
+#define MIC_I2S_PORT I2S_NUM_0
+static int32_t micBuf[256];
+float micRms = 0.0f;
+float micNoiseFloor = -1.0f;
+float micFastAvg = 0.0f;
+bool micReady = false;
+size_t micBytesThisTick = 0;
+int micLastReadError = ESP_OK;
+unsigned long micWarmupUntil = 0, lastMicScareAt = 0, lastMicCuriousAt = 0;
+
+void micInit() {
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
+  cfg.sample_rate = 16000;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+  cfg.dma_buf_count = 8;      // about 250 ms of audio buffered, so short sounds are not missed
+  cfg.dma_buf_len = 512;
+  cfg.use_apll = false;
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num = I2S_PIN_NO_CHANGE;
+  pins.bck_io_num = MIC_SCK;
+  pins.ws_io_num = MIC_WS;
+  pins.data_out_num = I2S_PIN_NO_CHANGE;
+  pins.data_in_num = MIC_SD;
+  if (i2s_driver_install(MIC_I2S_PORT, &cfg, 0, NULL) != ESP_OK) { Serial.println("Mic: I2S install failed"); return; }
+  if (i2s_set_pin(MIC_I2S_PORT, &pins) != ESP_OK) { i2s_driver_uninstall(MIC_I2S_PORT); Serial.println("Mic: I2S pin setup failed"); return; }
+  i2s_zero_dma_buffer(MIC_I2S_PORT);
+  micReady = true;
+  micWarmupUntil = millis() + 3000UL;
+  Serial.println("Mic ready (level only)");
+}
+
+void micTick(unsigned long now) {
+  if (!micReady) return;
+  static bool wasMuted = false;
+  if (micMuted) { wasMuted = true; return; }
+  if (wasMuted) { i2s_zero_dma_buffer(MIC_I2S_PORT); wasMuted = false; micFastAvg = 0; return; }
+  float chunkMax = 0.0f;
+  micBytesThisTick = 0;
+  micLastReadError = ESP_OK;
+  for (int rep = 0; rep < 20; ++rep) {          // wait briefly for a first frame, then drain buffered audio
+    size_t bytesRead = 0;
+    micLastReadError = i2s_read(MIC_I2S_PORT, micBuf, sizeof(micBuf), &bytesRead,
+                                rep == 0 ? pdMS_TO_TICKS(20) : 0);
+    if (micLastReadError != ESP_OK || bytesRead == 0) break;
+    micBytesThisTick += bytesRead;
+    const int n = (int)(bytesRead / sizeof(int32_t));
+    float mean = 0.0f;
+    for (int i = 0; i < n; ++i) mean += (float)(micBuf[i] >> 8);
+    mean /= (float)n;
+    float acc = 0.0f;
+    for (int i = 0; i < n; ++i) { const float v = (float)(micBuf[i] >> 8) - mean; acc += v * v; }
+    const float rms = sqrtf(acc / (float)n);
+    if (rms > chunkMax) chunkMax = rms;
+  }
+  micRms = chunkMax;
+  if (chunkMax <= 0.0f) return;
+  if (micNoiseFloor < 0.0f) micNoiseFloor = chunkMax;
+  if (now < micWarmupUntil) {                   // learn the room's quiet level first
+    micNoiseFloor += (chunkMax - micNoiseFloor) * 0.1f;
+    micFastAvg = micNoiseFloor;
+    return;
+  }
+  const float floorNow = micNoiseFloor < MIC_MIN_FLOOR ? MIC_MIN_FLOOR : micNoiseFloor;
+  const bool loudNow = micRms > floorNow * MIC_CURIOUS_FLOOR_MULT;
+  if (!loudNow && chunkMax < micNoiseFloor * 1.5f) micNoiseFloor += (chunkMax - micNoiseFloor) * 0.003f;
+  else micNoiseFloor += (chunkMax - micNoiseFloor) * 0.0003f;   // very slow rise if the room gets noisier
+  const float fast = micFastAvg < MIC_MIN_FLOOR ? MIC_MIN_FLOOR : micFastAvg;
+  const bool sudden = chunkMax > fast * MIC_SCARE_JUMP;
+  if (!micMuted && now >= scaredUntil && now - lastMicScareAt > MIC_SCARE_COOLDOWN_MS &&
+      chunkMax > MIC_SCARE_ABS && chunkMax > floorNow * MIC_SCARE_FLOOR_MULT && sudden) {
+    lastMicScareAt = now;
+    scaredUntil = now + 3500UL;
+    lastInteraction = now;
+    buzzScared();
+    emitDecision("Mic: loud noise - scared");
+  } else if (now >= scaredUntil && now - lastMicCuriousAt > MIC_CURIOUS_COOLDOWN_MS &&
+             chunkMax > MIC_CURIOUS_ABS && loudNow && sudden) {
+    lastMicCuriousAt = now;
+    curiousUntil = now + 4000UL;
+    emitDecision("Mic: heard something - curious");
+  }
+  micFastAvg += (chunkMax - micFastAvg) * 0.15f;
+#if MIC_DEBUG
+  static unsigned long lastDbg = 0;
+  if (now - lastDbg > 1000UL) { lastDbg = now; Serial.printf("Mic rms=%.0f floor=%.0f fast=%.0f\n", micRms, micNoiseFloor, micFastAvg); }
+#endif
+}
+#endif
+
+// ---- Pick-up detection from air pressure only (no motion sensor fitted).
+// Keeps a ~4 s ring of readings. A pick-up is a quick drop between the oldest and newest
+// readings, with a steady baseline before it. Slow weather drift and noisy air are rejected.
 void liftCheck() {
   if (!bmpOk) return;
-  unsigned long now = millis();
-  if (now - lastLiftCheck < 250) return;
+  const unsigned long now = millis();
+  if (now - lastLiftCheck < LIFT_SAMPLE_MS) return;
   lastLiftCheck = now;
-  float p = bme.readPressure() / 100.0f;
-  if (isnan(p)) return;
-  if (isnan(press2sAgo)) { press2sAgo = p; press2sTime = now; return; }
-  if (now - press2sTime >= 2000) {
-    if (press2sAgo - p >= LIFT_THRESHOLD && now > scaredUntil + 5000) {
-      scaredUntil = now + 4000; liftSuppressUntil = now + 8000; lastInteraction = now; buzzScared();
+  const float p = bme.readPressure() / 100.0f;
+  if (isnan(p) || p < 300.0f) return;
+  static float ring[LIFT_RING];
+  static int head = 0, count = 0;
+  ring[head] = p;
+  head = (head + 1) % LIFT_RING;
+  if (count < LIFT_RING) count++;
+  if (count < LIFT_RING) return;
+  if (now < liftSuppressUntil) return;
+  float oldAvg = 0, newAvg = 0, oldMin = 1e9f, oldMax = -1e9f;
+  for (int i = 0; i < 4; ++i) {
+    const float o = ring[(head + i) % LIFT_RING];
+    const float nw = ring[(head + LIFT_RING - 1 - i) % LIFT_RING];
+    oldAvg += o; newAvg += nw;
+    if (o < oldMin) oldMin = o;
+    if (o > oldMax) oldMax = o;
+  }
+  oldAvg /= 4.0f; newAvg /= 4.0f;
+  const float drop = oldAvg - newAvg;
+  const bool steadyBefore = (oldMax - oldMin) < LIFT_THRESHOLD * 0.6f;
+#if LIFT_DEBUG
+  if (drop > LIFT_THRESHOLD * 0.5f) Serial.printf("Lift? drop=%.3f hPa steady=%d\n", drop, steadyBefore ? 1 : 0);
+#endif
+  if (drop >= LIFT_THRESHOLD && steadyBefore) {
+    liftSuppressUntil = now + LIFT_COOLDOWN_MS;
+    count = 0; head = 0;                                // refill the baseline after a pick-up
+    lastInteraction = now;
+    if (liftCount == 0 || now - firstLiftAt > 20000UL) { liftCount = 1; firstLiftAt = now; }
+    else liftCount++;
+    if (liftCount >= 2) {
+      dizzyUntil = now + 5000UL;
+      buzzScared();
+      emitDecision("Picked up again - dizzy");
+    } else {
+      scaredUntil = now + 4000UL;
+      buzzScared();
       emitDecision("Picked up - scared");
     }
-    press2sAgo = p; press2sTime = now;
   }
 }
+
+// Passive mood = competing scores, judged against what is NORMAL for this room.
+// A steady, ordinary temperature never upsets it; only a clear change from the room's own
+// baseline (or an extreme reading) does. ANGRY is reserved for being over-petted.
+static int passiveMoodTarget(unsigned long now) {
+  float sc[MOOD_COUNT] = {};
+  sc[MOOD_NORMAL] = 0.45f;
+  if (comfortClass == COMFORT_OK && sensorsOk) sc[MOOD_HAPPY] = 0.55f;
+
+  if (sensorsOk && !isnan(envTemp) && !isnan(tempBaseline)) {
+    const float dT = envTemp - tempBaseline;
+    sc[MOOD_HOT]  = cf((dT - 1.5f) / 2.5f, 0.0f, 1.0f);
+    sc[MOOD_COLD] = cf((-dT - 1.5f) / 2.5f, 0.0f, 1.0f);
+    if (envTemp >= 38.0f) sc[MOOD_HOT] = 1.0f;
+    if (envTemp <= 10.0f) sc[MOOD_COLD] = 1.0f;
+  }
+  if (sensorsOk && !isnan(envHum) && !isnan(humBaseline)) {
+    const float dH = envHum - humBaseline;
+    sc[MOOD_SAD] = cf((dH - 12.0f) / 15.0f, 0.0f, 1.0f);
+    sc[MOOD_SUSPICIOUS] = cf((-dH - 12.0f) / 15.0f, 0.0f, 1.0f);
+  }
+#if ENABLE_WEATHER
+  if (wifiOn) {
+    WeatherSnapshot weather = getWeatherSnapshot();
+    if (weather.ok) {
+      if (strcmp(weather.main, "Rain") == 0 || strcmp(weather.main, "Drizzle") == 0) { if (sc[MOOD_SAD] < 0.4f) sc[MOOD_SAD] = 0.4f; }
+      else if (strcmp(weather.main, "Thunderstorm") == 0) sc[MOOD_SURPRISED] = 0.5f;
+    }
+  }
+#endif
+  // Once you have tapped at least 5 times, YOUR range decides how the room feels.
+  if (sensorsOk && comfortLearnersReady && !isnan(envTemp) && !isnan(envHum)) {
+    if (temperatureComfort.votes() >= 5) {
+      const float over = envTemp - temperatureComfort.hi(), under = temperatureComfort.lo() - envTemp;
+      if (over > 0.3f) sc[MOOD_HOT] = fmaxf(sc[MOOD_HOT], cf(0.5f + over * 0.12f, 0.5f, 1.0f));
+      if (under > 0.3f) sc[MOOD_COLD] = fmaxf(sc[MOOD_COLD], cf(0.5f + under * 0.12f, 0.5f, 1.0f));
+    }
+    if (humidityComfort.votes() >= 5) {
+      const float over = envHum - humidityComfort.hi(), under = humidityComfort.lo() - envHum;
+      if (over > 3.0f) sc[MOOD_SAD] = fmaxf(sc[MOOD_SAD], cf(0.5f + over * 0.03f, 0.5f, 1.0f));
+      if (under > 3.0f) sc[MOOD_SUSPICIOUS] = fmaxf(sc[MOOD_SUSPICIOUS], cf(0.5f + under * 0.03f, 0.5f, 1.0f));
+    }
+  }
+  const unsigned long idleSec = (now - lastInteraction) / 1000UL;
+  if (idleSec > 45 && idleSec <= 120) sc[MOOD_BORED] = 0.7f;
+  if (idleSec > 120) sc[MOOD_SLEEPY] = 0.85f;
+  if (idleSec > 600) {
+    bool night = false;
+    struct tm t;
+    if (timeSynced && currentTm(&t)) night = (t.tm_hour >= 22 || t.tm_hour < 7);
+    if (!night) sc[MOOD_LONELY] = 0.9f;
+  }
+  if (batteryPct < BATT_LOW_PCT) sc[MOOD_SLEEPY] = 1.0f;
+
+  int best = MOOD_NORMAL;
+  for (int i = 1; i < MOOD_COUNT; ++i) if (sc[i] > sc[best]) best = i;
+  // Hysteresis: keep the current passive mood unless the new one clearly wins and the
+  // current one has been shown for at least 10 s. Stops flicker between faces.
+  if (passiveMood != best) {
+    if (now - passiveMoodSince < 10000UL || sc[passiveMood] >= sc[best] - 0.10f) return passiveMood;
+    passiveMood = best;
+    passiveMoodSince = now;
+  }
+  return passiveMood;
+}
+
 void computeMood() {
   unsigned long now = millis();
   neglectSleepy = (now - lastInteraction > NEGLECT_MS);
+  if (sensorsOk && !isnan(envTemp) && !isnan(envHum)) {
+    if (isnan(tempBaseline) || isnan(humBaseline)) { tempBaseline = envTemp; humBaseline = envHum; lastBaselineAt = now; }
+    else if (now - lastBaselineAt >= 1000UL) {
+      const float dt = (now - lastBaselineAt) / 1000.0f;
+      lastBaselineAt = now;
+      const float a = dt / (BASELINE_TAU_S + dt);
+      tempBaseline += (envTemp - tempBaseline) * a;
+      humBaseline += (envHum - humBaseline) * a;
+    }
+  }
   int m;
   if (now < manualMoodUntil) m = manualMood;
   else if (now < scaredUntil) m = MOOD_SCARED;
+  else if (now < dizzyUntil) m = MOOD_DIZZY;
   else if (now < annoyedUntil) m = MOOD_ANGRY;
-  else if (now < kwsActiveUntil || now < excitedUntil) m = MOOD_EXCITED;
+  else if (now < excitedUntil) m = MOOD_EXCITED;
+  else if (now < playfulUntil) m = MOOD_PLAYFUL;
   else if (now < pettedUntil) m = MOOD_LOVE;
-  else if (neglectSleepy || batteryPct < BATT_LOW_PCT) m = MOOD_SLEEPY;
-  else if (isRelativelyCold()) m = MOOD_COLD;
-  else {
-    m = MOOD_NORMAL;
-    switch (comfortClass) {
-      case COMFORT_OK: m = MOOD_HAPPY; break;
-      case COMFORT_HOT: m = MOOD_ANGRY; break;
-      case COMFORT_HUMID: m = MOOD_SAD; break;
-      case COMFORT_DRY: m = MOOD_SUSPICIOUS; break;
-      case COMFORT_COLD: m = MOOD_COLD; break;
-    }
-#if ENABLE_WEATHER
-    WeatherSnapshot weather = getWeatherSnapshot();
-    if (wifiOn && weather.ok && sensorsOk && !isnan(envTemp)) {
-      ClimateParams localComfort = getClimateParams();
-      const float roomMin = localComfort.tMid - localComfort.tHalf;
-      const float roomMax = localComfort.tMid + localComfort.tHalf;
-      if (weather.temperature > roomMax && envTemp > roomMax) m = MOOD_ANGRY;
-      else if (weather.temperature < roomMin && envTemp < roomMin) m = MOOD_COLD;
-      else if (weather.temperature > roomMax && envTemp <= roomMax) m = MOOD_HAPPY;
-      else if (weather.temperature < roomMin && envTemp >= roomMin) m = MOOD_HAPPY;
-      else if (strcmp(weather.main, "Rain") == 0 || strcmp(weather.main, "Drizzle") == 0) m = MOOD_SAD;
-      else if (strcmp(weather.main, "Thunderstorm") == 0) m = MOOD_SURPRISED;
-      else if (strcmp(weather.main, "Clear") == 0 && comfortClass == COMFORT_OK) m = MOOD_HAPPY;
-    }
-#endif
-  }
+  else if (now < curiousUntil) m = MOOD_CURIOUS;
+  else m = passiveMoodTarget(now);
   currentMood = m;
   static int lastLoggedMood = -1;
   if (m != lastLoggedMood) {
@@ -1602,6 +1858,7 @@ void computeMood() {
     case MOOD_SCARED: pupilScale = 0.5f; break;
     case MOOD_LOVE: pupilScale = 1.25f; break;
     case MOOD_SURPRISED: pupilScale = 0.8f; break;
+    case MOOD_CURIOUS: pupilScale = 1.15f; break;
     default: pupilScale = 1.0f;
   }
 }
@@ -1614,14 +1871,10 @@ static const float MINIAI_TEMP_SCALE_C = 3.0f;
 static const float MINIAI_HUM_HIGH = 75.0f;
 static const float MINIAI_HUM_LOW = 30.0f;
 static const float MINIAI_HUM_SCALE = 15.0f;
-static const float MINIAI_NOISE_SCALE = 3.0f;
-static const float MINIAI_NOISE_GATE = 2.0f;
-static const float MINIAI_QUIET_CEILING = 200.0f;
 static const float MINIAI_PRESSURE_SCALE = 2.0f;
 static const float MINIAI_MIN_SCORE = 0.15f;
 static const float MINIAI_W_TEMP = 1.0f;
 static const float MINIAI_W_HUM = 1.0f;
-static const float MINIAI_W_NOISE = 1.0f;
 static const float MINIAI_W_PRESSURE = 0.9f;
 static const float MINIAI_W_TIMER = 1.0f;
 static const float MINIAI_W_ANOMALY = 1.0f;
@@ -1635,9 +1888,7 @@ void triggerMiniAI() {
   const unsigned long startTime = micros();
   hasRun = true;
   lastRunAt = now;
-  isAiResponding = true; aiResponseStart = now;
   if (!sensorsOk && !timerRunning && !anomalyActive) {
-    strlcpy(aiResponse, "Room sensor unavailable; check connections.", sizeof(aiResponse));
     Serial.print("MiniAI us="); Serial.println(micros() - startTime);
     return;
   }
@@ -1645,12 +1896,10 @@ void triggerMiniAI() {
   float sCold = sensorsOk && !isnan(envTemp) ? cf((MINIAI_COLD_C - envTemp) / MINIAI_TEMP_SCALE_C, 0, 1) : 0.0f;
   float sHum = sensorsOk && !isnan(envHum) ? cf((envHum - MINIAI_HUM_HIGH) / MINIAI_HUM_SCALE, 0, 1) : 0.0f;
   float sDry = sensorsOk && !isnan(envHum) ? cf((MINIAI_HUM_LOW - envHum) / MINIAI_HUM_SCALE, 0, 1) : 0.0f;
-  float sNoise = cf((micRms - micNoiseFloor * MINIAI_NOISE_GATE) / (micNoiseFloor * MINIAI_NOISE_SCALE), 0, 1);
-  float sQuiet = (micReady ? 1.0f : 0.0f) * cf((MINIAI_QUIET_CEILING - micRms) / MINIAI_QUIET_CEILING, 0, 1);
   float sRain = (!isnan(envPress) && !isnan(pressHourAgo)) ? cf((pressHourAgo - envPress) / MINIAI_PRESSURE_SCALE, 0, 1) : 0.0f;
   float sTimer = timerRunning ? 1.0f : 0.0f;
   float sAnom = anomalyActive ? 1.0f : 0.0f;
-  char cands[8][72]; float scores[8];
+  char cands[7][72]; float scores[7];
   snprintf(cands[0], sizeof(cands[0]), "Timer running: %lu min left. Focus!", timerRemainingSec / 60); scores[0] = sTimer * MINIAI_W_TIMER;
   snprintf(cands[1], sizeof(cands[1]), "Env shifting! %s", anomalyMsg); scores[1] = sAnom * MINIAI_W_ANOMALY;
   if (sensorsOk && !isnan(envTemp)) {
@@ -1664,61 +1913,17 @@ void triggerMiniAI() {
   else strlcpy(cands[4], "Room sensor unavailable.", sizeof(cands[4]));
   scores[2] = sHot * MINIAI_W_TEMP; scores[3] = sCold * MINIAI_W_TEMP; scores[4] = sHum * MINIAI_W_HUM;
   snprintf(cands[5], sizeof(cands[5]), "Air is dry - sip some water!"); scores[5] = sDry * MINIAI_W_HUM;
-  snprintf(cands[6], sizeof(cands[6]), "Room noisy - find a quiet spot!"); scores[6] = sNoise * MINIAI_W_NOISE;
-  if (sRain > 0.3f) snprintf(cands[7], sizeof(cands[7]), "Pressure falling - rain likely soon.");
-  else snprintf(cands[7], sizeof(cands[7]), "Room quiet & stable. Perfect for deep work!");
-  scores[7] = max(sQuiet, sRain * MINIAI_W_PRESSURE);
+  if (sRain > 0.3f) snprintf(cands[6], sizeof(cands[6]), "Pressure falling - rain likely soon.");
+  else snprintf(cands[6], sizeof(cands[6]), "Room conditions are stable.");
+  scores[6] = sRain * MINIAI_W_PRESSURE;
   int best = 0;
-  for (int i = 1; i < 8; i++) if (scores[i] > scores[best]) best = i;
-  if (scores[best] < MINIAI_MIN_SCORE) best = 7;
-  strlcpy(aiResponse, cands[best], sizeof(aiResponse));
+  for (int i = 1; i < 7; i++) if (scores[i] > scores[best]) best = i;
+  if (scores[best] < MINIAI_MIN_SCORE) best = 6;
   char aiEvent[112];
-  snprintf(aiEvent, sizeof(aiEvent), "MiniAI: %s", aiResponse);
+  snprintf(aiEvent, sizeof(aiEvent), "MiniAI: %s", cands[best]);
   emitDecision(aiEvent);
   Serial.print("MiniAI us="); Serial.println(micros() - startTime);
 }
-
-void processVoiceCommand() {
-  isAiResponding = true; aiResponseStart = millis(); currentPage = PAGE_KWS;
-  if (commandSyllables == 0) strlcpy(aiResponse, "No speech heard. Timer unchanged.", sizeof(aiResponse));
-  else strlcpy(aiResponse, "Speech not recognized. Timer unchanged.", sizeof(aiResponse));
-}
-
-void keywordSpotted() {
-  kwsActiveUntil = millis() + 2500; excitedUntil = millis() + 2500; lastInteraction = millis(); buzzKws();
-  emitDecision("Wake word detected");
-#if USE_TFLITE
-  isListeningForCommand = false;
-  strlcpy(aiResponse, "Wake word recognized", sizeof(aiResponse));
-#else
-  isListeningForCommand = true; listenStartTime = millis(); lastCmdSyllableAt = 0; commandSyllables = 0; cmdInSyllable = false;
-  strlcpy(aiResponse, "Listening... (speak!)", sizeof(aiResponse));
-#endif
-  isAiResponding = true; aiResponseStart = millis(); currentPage = PAGE_KWS;
-}
-
-#if !USE_TFLITE
-int classifyKeywordEdge() { return KWS_LABEL_REJECT; }
-#endif
-#if USE_TFLITE
-void handleKeywordLabel(int label) {
-  unsigned long now = millis();
-  if (label == KWS_LABEL_REJECT || now - lastKwsActionAt < 1200) return;
-  lastKwsActionAt = now;
-  if (label == KWS_LABEL_WAKE) { keywordSpotted(); return; }
-  if (label == KWS_LABEL_START_TIMER) {
-    if (timerRemainingSec == 0) timerRemainingSec = timerDurationSec;
-    timerRunning = true; timerLock = true; timerLastTick = now;
-    strlcpy(aiResponse, "Focus timer started", sizeof(aiResponse)); buzzHappy();
-    emitDecision("Voice command: start timer");
-  } else if (label == KWS_LABEL_STOP_TIMER) {
-    timerRunning = false; timerLock = false;
-    strlcpy(aiResponse, "Focus timer stopped", sizeof(aiResponse)); buzzTap();
-    emitDecision("Voice command: stop timer");
-  } else return;
-  isAiResponding = true; aiResponseStart = now; currentPage = PAGE_KWS;
-}
-#endif
 
 void petAction(unsigned long now, bool strongRub) {
   lastInteraction = now;
@@ -1727,68 +1932,11 @@ void petAction(unsigned long now, bool strongRub) {
   if (now - petWindowStart > PET_WINDOW_MS) { petWindowStart = now; petCount = 0; }
   petCount++;
   if (petCount >= PET_LIMIT) { annoyedUntil = now + 5000; petCount = 0; buzzGrumble(); emitDecision("Over-petted - angry"); }
-  else { pettedUntil = now + (strongRub ? 5000UL : 3000UL); buzzHappy(); emitEvent("Touch", strongRub ? "Strong pet detected" : "DeskPal was petted"); }
+  else { pettedUntil = now + (strongRub ? 6000UL : 3000UL); if (strongRub) playfulUntil = now + 3000UL; buzzHappy(); emitEvent("Touch", strongRub ? "Strong pet detected" : "DeskPal was petted"); }
 }
 void longPetAction(unsigned long now) {
   lastInteraction = now; annoyedUntil = 0; petCount = 0; pettedUntil = now + 6000; buzzHappy();
   emitDecision("Long cuddle - calmed");
-}
-
-void initMic() {
-#if ENABLE_MIC
-  i2s_config_t cfg = {};
-  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
-  cfg.sample_rate = 16000;
-  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT;
-  cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
-  cfg.communication_format = I2S_COMM_FORMAT_I2S;
-  cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-  cfg.dma_buf_count = 4; cfg.dma_buf_len = 256;
-  i2s_pin_config_t pins = {};
-  pins.bck_io_num = MIC_SCK; pins.ws_io_num = MIC_WS; pins.data_in_num = MIC_SD; pins.data_out_num = I2S_PIN_NO_CHANGE;
-  if (i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL) == ESP_OK && i2s_set_pin(I2S_NUM_0, &pins) == ESP_OK) {
-    micReady = true; Serial.println("INMP441 I2S mic ready");
-  } else { Serial.println("INMP441 init failed"); }
-#else
-  Serial.println("Mic disabled (ENABLE_MIC 0)");
-#endif
-}
-float readMicRms() {
-  if (!micReady || micMuted) return 0.0f;
-  size_t bytesRead = 0;
-  i2s_read(I2S_NUM_0, i2sBuf, sizeof(i2sBuf), &bytesRead, 20);
-  if (bytesRead == 0) return micRms;
-  int n = bytesRead / 4; double sum = 0;
-  for (int i = 0; i < n; i++) { int16_t s = (int16_t)(i2sBuf[i] >> 16); sum += (double)s * s; }
-  float rms = sqrtf((float)(sum / n));
-  micRms = micRms * 0.7f + rms * 0.3f;
-  micNoiseFloor = micNoiseFloor * 0.99f + micRms * 0.01f;
-  return micRms;
-}
-bool detectHeyPalEnergy(float rms) {
-  if (micMuted) return false;
-  float thresh = micNoiseFloor * 4.5f + 500.0f;
-  unsigned long now = millis();
-  if (isListeningForCommand) {
-    if (now - listenStartTime > 3000) { isListeningForCommand = false; processVoiceCommand(); return false; }
-    if (!cmdInSyllable && rms > thresh && now - lastCmdSyllableAt > 180) { cmdInSyllable = true; commandSyllables++; lastCmdSyllableAt = now; }
-    else if (cmdInSyllable && rms < thresh * 0.45f) { cmdInSyllable = false; }
-    return false;
-  }
-  switch (kwsState) {
-    case KWS_IDLE: if (rms > thresh) { kwsState = KWS_SYL1; kwsSyl1Time = now; } break;
-    case KWS_SYL1: if (now - kwsSyl1Time > 120 && rms < thresh * 0.45f) kwsState = KWS_GAP; if (now - kwsSyl1Time > 450) kwsState = KWS_IDLE; break;
-    case KWS_GAP: if (rms > thresh && now - kwsSyl1Time > 180 && now - kwsSyl1Time < 900) { kwsState = KWS_IDLE; return true; } if (now - kwsSyl1Time > 950) kwsState = KWS_IDLE; break;
-  }
-  return false;
-}
-void processAudio() {
-  if (!micReady || micMuted) return;
-  readMicRms();
-#if USE_TFLITE
-  int label = classifyKeywordEdge();
-  handleKeywordLabel(label);
-#endif
 }
 
 float readBatteryPct() {
@@ -1801,7 +1949,7 @@ float readBatteryPct() {
 #endif
 }
 const char* pageName(int page) {
-  static const char* names[] = {"Eyes", "Clock", "Weather", "Forecast", "Room", "Insights", "Microphone", "Timer"};
+  static const char* names[] = {"Eyes", "Clock", "Weather", "Forecast", "Room", "Insights", "Timer"};
   return (page >= PAGE_EYES && page <= PAGE_TIMER) ? names[page] : "Unknown";
 }
 void emitDashboardTelemetry() {
@@ -1826,10 +1974,14 @@ void emitDashboardTelemetry() {
     lastLoggedAnomaly = anomalyActive;
   }
   Serial.print("{\"type\":\"telemetry\",\"schema\":1,\"uptimeMs\":"); Serial.print(millis());
+  Serial.print(",\"quietMode\":"); Serial.print(quietMode ? "true" : "false");
+  Serial.print(",\"externalSoundLevel\":"); Serial.print(externalSoundHasSample ? externalSoundLevel : 0);
+  Serial.print(",\"externalSoundAgeMs\":"); if (externalSoundUpdatedAt) Serial.print(millis() - externalSoundUpdatedAt); else Serial.print("null");
+  Serial.print(",\"touchRawHigh\":"); Serial.print(digitalRead(TOUCH_PIN) == HIGH ? "true" : "false");
+  Serial.print(",\"buzzerActive\":"); Serial.print(buzzQueueIdx >= 0 ? "true" : "false");
+  Serial.print(",\"buzzerStarts\":"); Serial.print((unsigned long)buzzerStarts);
   Serial.print(",\"sensorsOk\":"); Serial.print(sensorsOk ? "true" : "false");
   Serial.print(",\"sensorAgeMs\":"); if (lastGoodSensorRead) Serial.print(millis() - lastGoodSensorRead); else Serial.print("null");
-  Serial.print(",\"micReady\":"); Serial.print(micReady ? "true" : "false");
-  Serial.print(",\"modelReady\":"); Serial.print(KWS_MODEL_INTEGRATED ? "true" : "false");
   Serial.print(",\"t\":"); if (!sensorsOk || isnan(envTemp)) Serial.print("null"); else Serial.print(envTemp, 1);
   Serial.print(",\"tRaw\":"); if (!sensorsOk || isnan(envTempRaw)) Serial.print("null"); else Serial.print(envTempRaw, 1);
   Serial.print(",\"tempOffsetC\":"); Serial.print(tempOffsetC, 1);
@@ -1849,8 +2001,6 @@ void emitDashboardTelemetry() {
   Serial.print(",\"inferred\":\""); Serial.print(inferred); Serial.print('"');
   Serial.print(",\"infMs\":"); Serial.print(infAvg, 2);
   Serial.print(",\"batt\":"); if (isnan(batteryPct)) Serial.print("null"); else Serial.print(batteryPct, 0);
-  Serial.print(",\"micMute\":"); Serial.print(micMuted ? "true" : "false");
-  Serial.print(",\"micRms\":"); Serial.print(micRms, 0);
   Serial.print(",\"timerMinutes\":"); Serial.print(timerDurationSec / 60UL);
   Serial.print(",\"timerRemainingSec\":"); Serial.print(timerRemainingSec);
   Serial.print(",\"timerRunning\":"); Serial.print(timerRunning ? "true" : "false");
@@ -1887,10 +2037,12 @@ void handleTouchPetting() {
   const bool t = rawTouch;
 
   if (t && !lastTouch) {
+    Serial.println("Touch: GPIO32 HIGH (pressed)");
     if (wakeScreenIfOff(now)) { lastTouch = t; return; }
     recordTouchTransition(now);
     touchPressStart = now;
     touchLongHoldFired = false;
+    if (currentPage != PAGE_TIMER) petAction(now, touchTransitions >= RUB_MIN_TRANSITIONS);
   } else if (t && lastTouch) {
     if (!touchLongHoldFired && now - touchPressStart >= TOUCH_LONG_HOLD_MS) {
       touchLongHoldFired = true;
@@ -1903,9 +2055,9 @@ void handleTouchPetting() {
       }
     }
   } else if (!t && lastTouch) {
+    Serial.println("Touch: GPIO32 LOW (released)");
     if (!touchLongHoldFired) {
       const unsigned long heldMs = now - touchPressStart;
-      const bool strongRub = (touchTransitions >= RUB_MIN_TRANSITIONS);
       if (heldMs < TOUCH_LONG_HOLD_MS) {
         if (currentPage == PAGE_TIMER) {
           if (!timerRunning && !isTimerAlarm) {
@@ -1915,13 +2067,11 @@ void handleTouchPetting() {
             emitEvent("Timer", "Timer duration increased by 5 minutes");
             buzzTap();
           }
-        } else {
-          petAction(now, strongRub);
         }
       }
     }
-    touchTransitions = 0;
-    rubWindowStart = 0;
+    // BUGFIX: the rub counter used to be reset on every release, so a rub could never reach
+    // RUB_MIN_TRANSITIONS. recordTouchTransition() already restarts it when the window expires.
   }
   lastTouch = t;
 }
@@ -1981,9 +2131,6 @@ void processSerialCommands() {
     } else if (strcmp(name, "setTempOffset") == 0 && command["offset"].is<float>()) {
       float offset = command["offset"].as<float>();
       if (!setTemperatureOffset(offset)) emitDecision("Temperature correction must be -10 to +10 C");
-    } else if (strcmp(name, "setMic") == 0 && command["enabled"].is<bool>()) {
-      micMuted = !command["enabled"].as<bool>();
-      emitDecision(micMuted ? "Mic muted" : "Mic level monitor enabled");
     }
   }
 }
@@ -1992,7 +2139,7 @@ void handleButtonNav() {
   const unsigned long now = millis();
   static bool rawPressed = false;
   static unsigned long rawButtonChangedAt = 0;
-  const bool sampledPressed = (digitalRead(BTN_MICMUTE_PIN) == LOW);
+  const bool sampledPressed = (digitalRead(BTN_NAV_PIN) == LOW);
   if (sampledPressed != rawPressed) { rawPressed = sampledPressed; rawButtonChangedAt = now; return; }
   if (now - rawButtonChangedAt < 30UL) return;
   const bool b = rawPressed;
@@ -2015,10 +2162,6 @@ void handleButtonNav() {
       if (currentPage == PAGE_TIMER) {
         clearTimerAlarm();
         currentPage = PAGE_EYES;
-        buzzTap();
-      } else if (currentPage == PAGE_EYES) {
-        micMuted = !micMuted;
-        emitDecision(micMuted ? "Mic muted" : "Mic unmuted (level monitor only)");
         buzzTap();
       } else {
         currentPage = PAGE_EYES;
@@ -2053,7 +2196,14 @@ void handleButtonNav() {
   lastBtn = b;
 }
 void handleInputs() {
+  const bool wasQuiet = quietMode;
   quietMode = (digitalRead(SWITCH_PIN) == LOW);
+  micMuted = quietMode;   // used only if optional local audio support is enabled
+  if (quietMode && !wasQuiet) {
+    digitalWrite(BUZZER_PIN, LOW);
+    buzzQueueIdx = -1;
+    buzzQueueLen = 0;
+  }
   handleTouchPetting();
   handleButtonNav();
 }
@@ -2157,8 +2307,6 @@ size_t buildTelemetryJson(char* out, size_t capacity) {
   root["sensorsOk"] = sensorsOk;
   if (lastGoodSensorRead) root["sensorAgeMs"] = millis() - lastGoodSensorRead;
   else root["sensorAgeMs"] = nullptr;
-  root["micReady"] = micReady;
-  root["modelReady"] = (bool)KWS_MODEL_INTEGRATED;
   if (!sensorsOk || isnan(envTemp)) root["t"] = nullptr; else root["t"] = roundf(envTemp * 10.0f) / 10.0f;
   if (!sensorsOk || isnan(envTempRaw)) root["tRaw"] = nullptr; else root["tRaw"] = roundf(envTempRaw * 10.0f) / 10.0f;
   root["tempOffsetC"] = roundf(tempOffsetC * 10.0f) / 10.0f;
@@ -2178,8 +2326,6 @@ size_t buildTelemetryJson(char* out, size_t capacity) {
   root["inferred"] = inferred;
   root["infMs"] = roundf(infAvg * 100.0f) / 100.0f;
   if (isnan(batteryPct)) root["batt"] = nullptr; else root["batt"] = (int)roundf(batteryPct);
-  root["micMute"] = micMuted;
-  root["micRms"] = (int)roundf(micRms);
   root["timerMinutes"] = timerDurationSec / 60UL;
   root["timerRemainingSec"] = timerRemainingSec;
   root["timerRunning"] = timerRunning;
@@ -2312,6 +2458,7 @@ void handleWifiSaveApi() {
   }
   bool saved = putStr("ssid", ssid) && putStr("pass", pass);
   prefs.end();
+  if (saved) addKnownNetwork(ssid, pass);
   if (!saved) {
     addApiCorsHeaders(); configServer.send(500, "application/json", "{\"error\":\"Could not save Wi-Fi settings\"}"); return;
   }
@@ -2438,13 +2585,59 @@ void setMqttState(MqttState nextState, const char* message) {
   emitEvent("Network", message);
 }
 
+static bool wifiScanPending = false;
+static unsigned long wifiScanStartedAt = 0;
+static String wifiSkipSsid;   // network that just failed; try others first
+
+static void connectToKnown(int idx, unsigned long now) {
+  wifiSsid = knownNets[idx].ssid;
+  wifiPass = knownNets[idx].pass;
+  wifiAttemptStartedAt = now;
+  Serial.printf("Wi-Fi attempt %u: %s\n", (unsigned)(wifiFailureCount + 1), wifiSsid.c_str());
+  setWifiState(NET_WIFI_CONNECTING, "Wi-Fi connecting");
+  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+}
+
 void startWifiConnection(unsigned long now) {
-  if (!wifiWant || wifiSsid.length() == 0 || inConfigMode) return;
+  if (!wifiWant || knownNetCount == 0 || inConfigMode) return;
   wifiOn = false;
   wifiAttemptStartedAt = now;
-  setWifiState(NET_WIFI_CONNECTING, "Wi-Fi connecting");
-  Serial.printf("Wi-Fi attempt %u\n", (unsigned)(wifiFailureCount + 1));
-  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+  setWifiState(NET_WIFI_CONNECTING, "Wi-Fi scanning for saved networks");
+  WiFi.scanDelete();
+  if (WiFi.scanNetworks(true, false) == WIFI_SCAN_FAILED) {
+    connectToKnown(0, now);          // scan could not start: try the newest saved network
+    return;
+  }
+  wifiScanPending = true;
+  wifiScanStartedAt = now;
+}
+
+// Called every loop while a scan is running; picks the strongest saved network in range.
+static void finishWifiScan(unsigned long now) {
+  int n = WiFi.scanComplete();
+  if (n == WIFI_SCAN_RUNNING) {
+    if (now - wifiScanStartedAt < 12000UL) return;
+    n = WIFI_SCAN_FAILED;
+  }
+  wifiScanPending = false;
+  int best = -1, bestRssi = -1000, skipped = -1, skippedRssi = -1000;
+  for (int i = 0; i < n; ++i) {
+    String name = WiFi.SSID(i);
+    const int rssi = WiFi.RSSI(i);
+    for (int k = 0; k < knownNetCount; ++k) {
+      if (name != knownNets[k].ssid) continue;
+      if (wifiSkipSsid.length() && name == wifiSkipSsid) { if (rssi > skippedRssi) { skippedRssi = rssi; skipped = k; } }
+      else if (rssi > bestRssi) { bestRssi = rssi; best = k; }
+    }
+  }
+  WiFi.scanDelete();
+  if (best < 0) best = skipped;
+  if (best >= 0) { connectToKnown(best, now); return; }
+  if (n == WIFI_SCAN_FAILED) { connectToKnown(0, now); return; }
+  // Nothing saved is in range: wait and look again (not counted as a failure).
+  wifiOn = false;
+  wifiRetryAt = now + 30000UL;
+  setWifiState(NET_WIFI_BACKOFF, "No saved Wi-Fi in range");
 }
 
 void networkRestart(const char* reason) {
@@ -2478,6 +2671,9 @@ void printPendingNetworkRestartReason() {
 }
 
 void handleWifiFailure(unsigned long now) {
+  // A failed join (wrong password/timeout) skips that network next time; a dropped link does not.
+  if (wifiState == NET_WIFI_CONNECTING && knownNetCount > 1) wifiSkipSsid = wifiSsid;
+  else if (wifiState == NET_WIFI_CONNECTED) wifiSkipSsid = "";
   wifiOn = false;
   timeSynced = false;
   ++wifiFailureCount;
@@ -2523,6 +2719,107 @@ void publishComfortTelemetry() {
     Serial.println("Warning: comfort telemetry publish failed");
 }
 
+static bool processDashboardCommand(JsonObject req) {
+  const char* cmd = req["cmd"] | "";
+  const unsigned long now = millis();
+  if (strcmp(cmd, "timer") == 0) {
+    const char* action = req["action"] | "";
+    const int minutes = req["minutes"] | 0;
+    if (strcmp(action, "set") == 0) return setTimerMinutes(minutes);
+    if (strcmp(action, "start") == 0) {
+      if (minutes != 0 && !setTimerMinutes(minutes)) return false;
+      if (isTimerAlarm) return false;
+      if (timerRemainingSec == 0) timerRemainingSec = timerDurationSec;
+      if (!timerRunning) { timerRunning = true; timerLock = true; timerLastTick = now; lastInteraction = now; emitEvent("Timer", "Timer started from dashboard"); }
+      return true;
+    }
+    if (strcmp(action, "pause") == 0) {
+      if (timerRunning) { timerRunning = false; timerLock = false; emitEvent("Timer", "Timer paused from dashboard"); }
+      return true;
+    }
+    if (strcmp(action, "reset") == 0 || strcmp(action, "dismiss") == 0) {
+      const bool wasAlarm = isTimerAlarm;
+      timerRunning = false; timerLock = false; isTimerAlarm = false;
+      timerRemainingSec = timerDurationSec;
+      digitalWrite(BUZZER_PIN, LOW); buzzQueueIdx = -1; buzzQueueLen = 0;
+      emitEvent("Timer", wasAlarm ? "Timer alarm dismissed from dashboard" : "Timer reset from dashboard");
+      return true;
+    }
+    return false;
+  }
+  if (strcmp(cmd, "offset") == 0) return setTemperatureOffset(req["value"] | NAN);
+  if (strcmp(cmd, "sync_events") == 0) {
+    const uint32_t after = req["after"] | 0;
+    const uint32_t oldestId = nextDeviceEventId > DEVICE_EVENT_CAPACITY ? nextDeviceEventId - DEVICE_EVENT_CAPACITY : 1;
+    for (uint32_t id = oldestId; id < nextDeviceEventId; ++id) {
+      if (id <= after) continue;
+      const DeviceEvent& e = deviceEvents[(id - 1) % DEVICE_EVENT_CAPACITY];
+      if (e.id == id) { mqttPublishEvent(e); mqtt.loop(); }
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool processExternalSoundCommand(JsonObject req) {
+  static const unsigned long EXTERNAL_SCARE_COOLDOWN_MS = 10000UL;
+  static const unsigned long EXTERNAL_CURIOUS_COOLDOWN_MS = 5000UL;
+  const char* cmd = req["cmd"] | "";
+  if (strcmp(cmd, "sound_level") != 0) return false;
+  if (!req["level"].is<int>()) return true;
+  const int level = req["level"].as<int>();
+  if (level < 0 || level > 100) return true;
+  int peak = level;
+  if (req["peak"].is<int>()) {
+    peak = req["peak"].as<int>();
+    if (peak < 0 || peak > 100) peak = level;
+  }
+
+  const unsigned long now = millis();
+  if (lastExternalSoundCommandAt && now - lastExternalSoundCommandAt < 100UL) return true;
+  lastExternalSoundCommandAt = now;
+  const bool hadPrevious = externalSoundHasSample;
+  externalSoundLevel = (uint8_t)level;
+  externalSoundHasSample = true;
+  externalSoundUpdatedAt = now;
+  if (!hadPrevious || !isfinite(externalSoundBaseline)) {
+    externalSoundBaseline = level;
+  }
+
+  // Use the dashboard's 200 ms peak window for transient bangs. Keep the
+  // adaptive room baseline tied to the sustained level so one bang cannot
+  // shift the baseline upward.
+  const int triggerLevel = max(level, peak);
+  const float rise = triggerLevel - externalSoundBaseline;
+  if (rise <= 1.0f) externalSoundRiseLatched = false;
+  if (!externalSoundRiseLatched && triggerLevel >= 72 && rise >= 14.0f) {
+    externalSoundRiseLatched = true;
+    if (lastExternalScareAt && now - lastExternalScareAt < EXTERNAL_SCARE_COOLDOWN_MS) {
+      externalSoundBaseline += (level - externalSoundBaseline) * 0.01f;
+      return true;
+    }
+    lastExternalScareAt = now;
+    scaredUntil = now + 3000UL;
+    lastInteraction = now;
+    emitEvent("Sound", "Loud sound detected by dashboard device");
+  } else if (!externalSoundRiseLatched && triggerLevel >= 8 && rise >= 3.0f) {
+    externalSoundRiseLatched = true;
+    if (lastExternalCuriousAt && now - lastExternalCuriousAt < EXTERNAL_CURIOUS_COOLDOWN_MS) {
+      externalSoundBaseline += (level - externalSoundBaseline) * 0.01f;
+      return true;
+    }
+    lastExternalCuriousAt = now;
+    curiousUntil = now + 4000UL;
+    lastInteraction = now;
+    emitEvent("Sound", "Sound detected by dashboard device");
+  }
+
+  // Follow gradual room changes while keeping short sound rises visible.
+  const float baselineRate = level < externalSoundBaseline ? 0.15f : 0.01f;
+  externalSoundBaseline += (level - externalSoundBaseline) * baselineRate;
+  return true;
+}
+
 void mqttComfortCommand(char* topic, byte* payload, unsigned int length) {
   (void)topic;
   if (!payload || length == 0 || length > 128) return;
@@ -2531,6 +2828,8 @@ void mqttComfortCommand(char* topic, byte* payload, unsigned int length) {
   json[length] = '\0';
   StaticJsonDocument<192> request;
   if (deserializeJson(request, json, length) || !request.is<JsonObject>()) return;
+  if (processExternalSoundCommand(request.as<JsonObject>())) return;
+  if (processDashboardCommand(request.as<JsonObject>())) { publishComfortTelemetry(); return; }
   if (processComfortCommand(request.as<JsonObject>()) == COMFORT_COMMAND_OK)
     publishComfortTelemetry();
 }
@@ -2758,11 +3057,13 @@ void wifiTick(unsigned long now) {
 
   if (wifiState == NET_WIFI_IDLE) startWifiConnection(now);
   else if (wifiState == NET_WIFI_BACKOFF && now >= wifiRetryAt) startWifiConnection(now);
+  if (wifiState == NET_WIFI_CONNECTING && wifiScanPending) { finishWifiScan(now); return; }
 
   const wl_status_t status = WiFi.status();
   if (wifiState == NET_WIFI_CONNECTING) {
     if (status == WL_CONNECTED) {
       wifiOn = true;
+      wifiSkipSsid = "";
       wifiFailureCount = 0;
       mqttFailureCount = 0;
       wifiRetryAt = 0;
@@ -2845,47 +3146,18 @@ bool currentTm(struct tm* t) {
   return gmtime_r(&demo, t) != nullptr;
 }
 
-void drawTypewriterText(const char* fullText, int yStart, int maxLines, unsigned long startTime) {
-  display.setFont(NULL); display.setTextColor(OLED_WHITE);
-  display.fillRect(0, yStart, SCREEN_WIDTH, maxLines * 10 + 2, OLED_BLACK);
-  int totalLen = strlen(fullText);
-  int vis = (int)((millis() - startTime) / 30);
-  int shown = min(totalLen, vis);
-  char s[96]; strlcpy(s, fullText, sizeof(s));
-  if (shown < (int)sizeof(s) - 1) s[shown] = '\0';
-  int y = yStart, line = 0;
-  char cur[21]; int curLen = 0;
-  int sLen = strlen(s);
-  for (int i = 0; i <= sLen; i++) {
-    char ch = (i < sLen) ? s[i] : '\0';
-    if (ch == ' ' && curLen == 0) continue;
-    if (ch == '\0' || ch == ' ' || curLen == 20) {
-      if (curLen) {
-        cur[curLen] = '\0'; display.fillRect(0, y, SCREEN_WIDTH, 10, OLED_BLACK); display.setCursor(2, y); display.print(cur);
-        curLen = 0; y += 10; line++; if (line == maxLines) break;
-      }
-      if (ch == ' ') continue;
-      if (ch == '\0') break;
-    }
-    cur[curLen++] = ch;
-  }
-  if (line < maxLines && curLen > 0) { cur[curLen] = '\0'; display.fillRect(0, y, SCREEN_WIDTH, 10, OLED_BLACK); display.setCursor(2, y); display.print(cur); }
-}
 void drawFitLine(const char* text, int y, int maxChars = 21) {
-  char line[24];
-  strlcpy(line, text, sizeof(line));
-  if ((int)strlen(line) > maxChars) line[maxChars] = '\0';
-  display.setFont(NULL);
   display.setTextColor(OLED_WHITE);
-  display.setCursor(2, y);
-  display.print(line);
+  const int width = ci(maxChars, 1, 21) * 6;
+  drawOledTextFit(display, text, 1, y, nullptr, width, OLED_TEXT_LEFT);
 }
 void drawHeader(const char* title) {
-  display.fillRect(0, 0, 128, 16, OLED_WHITE); display.setFont(NULL); display.setTextColor(OLED_BLACK);
-  display.setCursor(64 - (int)(strlen(title) * 3), 4); display.print(title); display.setTextColor(OLED_WHITE);
+  display.fillRect(1, 0, 126, 16, OLED_WHITE); display.setTextColor(OLED_BLACK);
+  drawOledTextFit(display, title, 64, 4, nullptr, 126, OLED_TEXT_CENTER);
+  display.setTextColor(OLED_WHITE);
 }
 void drawWarnIcon(int x, int y) {
-  x = ci(x, 0, SCREEN_WIDTH - 15); y = ci(y, 0, SCREEN_HEIGHT - 13);
+  x = ci(x, 1, SCREEN_WIDTH - 16); y = ci(y, 0, SCREEN_HEIGHT - 14);
   display.fillTriangle(x + 7, y, x, y + 12, x + 14, y + 12, OLED_WHITE);
   display.drawLine(x + 7, y + 3, x + 7, y + 8, OLED_BLACK); display.drawPixel(x + 7, y + 10, OLED_BLACK);
 }
@@ -2896,14 +3168,14 @@ void drawBatteryIcon(int x, int y) {
   for (int i = 0; i < segs; i++) display.fillRect(x + 2 + i * 4, y + 4, 3, 5, OLED_WHITE);
 }
 void drawWifiIcon(int x, int y, bool on) {
-  if (!on) { display.setFont(NULL); display.setCursor(x, y); display.print("x"); return; }
+  if (!on) { display.setTextColor(OLED_WHITE); drawOledTextFit(display, "x", x, y, nullptr, 6); return; }
   for (int r = 2; r <= 6; r += 2) drawFatArc(x + 4, y + 7, r, 220, 320, 1, x, y, 10, 10);
 }
 void drawEmooEye(Eye& e, bool isLeft, int mood) {
   clampEyeState(e);
   int ix = (int)e.x, iy = (int)e.y, iw = (int)e.w, ih = (int)e.h;
-  ix = ci(ix, 0, SCREEN_WIDTH - 1); iy = ci(iy, 0, SCREEN_HEIGHT - 1);
-  iw = ci(iw, 4, SCREEN_WIDTH - ix); ih = ci(ih, 4, SCREEN_HEIGHT - iy);
+  ix = ci(ix, 1, SCREEN_WIDTH - 2); iy = ci(iy, 0, SCREEN_HEIGHT - 2);
+  iw = ci(iw, 4, SCREEN_WIDTH - 1 - ix); ih = ci(ih, 4, SCREEN_HEIGHT - 1 - iy);
   int cx = ix + iw / 2, cy = iy + ih / 2;
   switch (mood) {
     case MOOD_HAPPY: drawFatArc(cx, cy + ih / 4, ci(iw / 2, 4, 20), 200, 340, 6, ix, iy, iw, ih); break;
@@ -2921,7 +3193,27 @@ void drawEmooEye(Eye& e, bool isLeft, int mood) {
       if (isLeft) drawFatLine(cx - iw / 2 + 3, cy + ih / 2 - 3, cx + iw / 2 - 3, cy - ih / 2 + 3, 8, ix, iy, iw, ih);
       else drawFatLine(cx - iw / 2 + 3, cy - ih / 2 + 3, cx + iw / 2 - 3, cy + ih / 2 - 3, 8, ix, iy, iw, ih);
       break;
-    case MOOD_SAD: drawFatArc(cx, cy - ih / 4, ci(iw / 2, 4, 20), 20, 160, 6, ix, iy, iw, ih); break;
+    case MOOD_SAD: case MOOD_LONELY: drawFatArc(cx, cy - ih / 4, ci(iw / 2, 4, 20), 20, 160, 6, ix, iy, iw, ih); break;
+    case MOOD_HOT:
+      display.fillRoundRect(ix + 2, cy - 5, iw - 4, 10, 4, OLED_WHITE);
+      drawClippedBitmap(isLeft ? ix - 2 : ix + iw - 6, iy + (int)((millis() / 60) % 24), bmp_tiny_drop, 8, 8, OLED_WHITE);
+      break;
+    case MOOD_DIZZY: {
+      const int r = ci((iw < ih ? iw : ih) / 2 - 1, 4, 22);
+      const float a = (millis() / 110.0f) * (isLeft ? 1.0f : -1.0f);
+      display.drawCircle(cx, cy, r, OLED_WHITE);
+      display.drawCircle(cx, cy, r / 2, OLED_WHITE);
+      display.drawLine(cx, cy, cx + (int)(cosf(a) * r), cy + (int)(sinf(a) * r), OLED_WHITE);
+      display.drawLine(cx, cy, cx - (int)(cosf(a) * r / 2), cy - (int)(sinf(a) * r / 2), OLED_WHITE);
+      break; }
+    case MOOD_PLAYFUL:
+      if (isLeft) drawFatArc(cx, cy + ih / 4, ci(iw / 2, 4, 20), 200, 340, 6, ix, iy, iw, ih);   // winking eye
+      else {
+        display.fillRoundRect(ix, iy, iw, ih, 8, OLED_WHITE);
+        const int pw = iw / 3, ph = ih / 3;
+        display.fillRoundRect(cx - pw / 2 - 3, cy - ph / 2 - 3, pw, ph, 3, OLED_BLACK);
+      }
+      break;
     default: {
       int r = (iw < 20) ? 3 : 8;
       display.fillRoundRect(ix, iy, iw, ih, r, OLED_WHITE);
@@ -2931,6 +3223,7 @@ void drawEmooEye(Eye& e, bool isLeft, int mood) {
       int py = ci(cy + (int)e.pupilY - ph / 2, iy, iy + ih - ph);
       display.fillRoundRect(px, py, pw, ph, r / 2, OLED_BLACK);
       if (iw > 15 && ih > 15 && pupilScale > 0.7f) drawClippedPixel(px + pw - 4, py + 4, ix, iy, iw, ih, OLED_WHITE);
+      if (mood == MOOD_BORED) display.fillRect(ix, iy, iw, (ih * 45) / 100, OLED_BLACK);   // heavy eyelid
       if (mood == MOOD_ANGRY) {
         for (int i = 0; i < ih / 2; i++) {
           int y = iy + i;
@@ -2952,6 +3245,12 @@ void applyGesture(unsigned long now) {
     case MOOD_ANGRY: gx = ((now / 80) % 2) ? 1.5f : -1.5f; break;
     case MOOD_SCARED: gx = random(-1, 2); gy = random(-1, 2); break;
     case MOOD_SAD: gpy = 4; gy = 1.5f; break;
+    case MOOD_LONELY: gpy = 4; gy = 1.0f; break;
+    case MOOD_BORED: gpx = sinf(now / 1500.0f) * 6.0f; gy = 1.0f; break;
+    case MOOD_CURIOUS: gpy = -4; gpx = sinf(now / 400.0f) * 4.0f; break;
+    case MOOD_HOT: gy = sinf(now / 300.0f); break;
+    case MOOD_DIZZY: gx = sinf(now / 90.0f) * 3.0f; gy = cosf(now / 90.0f) * 2.0f; break;
+    case MOOD_PLAYFUL: gy = sinf(now / 180.0f) * 2.5f; break;
     case MOOD_SUSPICIOUS: gpx = 6; break;
     case MOOD_SLEEPY: gy = 2 + sinf(now / 900.0f); break;
     case MOOD_SURPRISED: gy = random(-1, 2); break;
@@ -2991,7 +3290,13 @@ void updatePhysicsAndMood() {
       case MOOD_SURPRISED: baseW = 30; baseH = 45; break;
       case MOOD_SLEEPY: baseW = 38; baseH = 30; break;
       case MOOD_ANGRY: baseW = 34; baseH = 32; break;
-      case MOOD_SAD: baseW = 34; baseH = 30; leftEye.targetY = 30; rightEye.targetY = 30; break;
+      case MOOD_SAD: case MOOD_LONELY: baseW = 34; baseH = 30; leftEye.targetY = 30; rightEye.targetY = 30; break;
+      case MOOD_BORED: baseW = 36; baseH = 32; break;
+      case MOOD_HOT: baseW = 38; baseH = 26; break;
+      case MOOD_PLAYFUL: baseW = 38; baseH = 34; break;
+      case MOOD_CURIOUS:
+        leftEye.targetW = 34; leftEye.targetH = 42; rightEye.targetW = 34; rightEye.targetH = 30;
+        applyGesture(now); leftEye.update(); rightEye.update(); clampEyeState(leftEye); clampEyeState(rightEye); return;
       case MOOD_SCARED: baseW = 30; baseH = 22; break;
       case MOOD_EXCITED: baseW = 36; baseH = 34; leftEye.targetX = 26; rightEye.targetX = 66; break;
       case MOOD_COLD: baseW = 32; baseH = 30; break;
@@ -3026,23 +3331,23 @@ void drawEmoPage() {
     drawFatArc(61, 56, 3, -70, 70, 2, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
     drawClippedBitmap(118, 0, bmp_tiny_drop, 8, 8, OLED_WHITE);
   }
+  if (currentMood == MOOD_HOT) { display.fillRoundRect(57, 49, 14, 8, 3, OLED_WHITE); display.drawFastHLine(59, 52, 10, OLED_BLACK); }
+  else if (currentMood == MOOD_PLAYFUL) { display.fillRoundRect(60, 50, 9, 7, 3, OLED_WHITE); display.drawFastVLine(64, 50, 5, OLED_BLACK); }
+  else if (currentMood == MOOD_LONELY) drawClippedBitmap(34, 40 + (int)((now / 90) % 20), bmp_tiny_drop, 8, 8, OLED_WHITE);
+  else if (currentMood == MOOD_BORED) { display.drawFastHLine(56, 52, 16, OLED_WHITE); }
+  else if (currentMood == MOOD_DIZZY) { display.drawFastHLine(54, 52 + (int)(sinf(now / 90.0f) * 2), 20, OLED_WHITE); }
   if (anomalyActive) drawWarnIcon(0, 0);
-  if (quietMode) { display.setFont(NULL); display.setCursor(120, 0); display.print("M"); }
+  display.setTextColor(OLED_WHITE);
   drawEmooEye(leftEye, true, currentMood); drawEmooEye(rightEye, false, currentMood);
 }
 void drawClock() {
   struct tm t; currentTm(&t);
   drawHeader(timeSynced ? "CLOCK" : "CLOCK (DEMO)");
-  display.setTextColor(OLED_WHITE); display.setFont(NULL); display.setTextSize(1);
-  display.setFont(&FreeSansBold18pt7b);
+  display.setTextColor(OLED_WHITE);
   char timeStr[6]; sprintf(timeStr, "%02d:%02d", t.tm_hour, t.tm_min);
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(timeStr, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(max(0, (SCREEN_WIDTH - (int)w) / 2), 43); display.print(timeStr);
-  display.setFont(NULL);
+  drawOledTextFit(display, timeStr, 64, 19, &FreeSansBold18pt7b, 126, OLED_TEXT_CENTER);
   char dateStr[20]; strftime(dateStr, 20, "%a, %b %d", &t);
-  display.getTextBounds(dateStr, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(max(0, (SCREEN_WIDTH - (int)w) / 2), 57); display.print(dateStr);
+  drawOledTextFit(display, dateStr, 64, 51, nullptr, 126, OLED_TEXT_CENTER);
   drawWifiIcon(116, 2, wifiOn);
   drawBatteryIcon(94, 1);
 }
@@ -3055,13 +3360,13 @@ void drawEnvPage() {
   }
   char line[32];
   snprintf(line, sizeof(line), "%.1f C", envTemp); drawFitLine(line, 24, 14);
-  snprintf(line, sizeof(line), "Humidity  %d%%", (int)envHum); drawFitLine(line, 42, 18);
+  snprintf(line, sizeof(line), "Humidity  %d%%", (int)envHum); drawFitLine(line, 41, 18);
 
   const int sampleCount = min(historySampleCount(), (int)TELEMETRY_HISTORY_COUNT);
   if (sampleCount < 5) return;
   const int historyStart = historyStartIndex(sampleCount);
 
-  const int graphX = 64, graphY = 50, graphWidth = 60, graphHeight = 14;
+  const int graphX = 64, graphY = 50, graphWidth = 60, graphHeight = 13;
   float minTemp = INFINITY, maxTemp = -INFINITY;
   for (int i = 0; i < sampleCount; ++i) {
     const int idx = historyIndex(historyStart, i);
@@ -3139,35 +3444,6 @@ void drawInsightsPage() {
   drawFitLine(dewLine, 47);
   drawFitLine(insightAction, 57);
 }
-void drawKwsPage() {
-#if USE_TFLITE
-  drawHeader("VOICE MODEL");
-#else
-  drawHeader("MIC LEVEL");
-#endif
-  display.setFont(NULL); display.setTextColor(OLED_WHITE);
-  if (isAiResponding && millis() - aiResponseStart < 4000) { drawTypewriterText(aiResponse, 20, 3, aiResponseStart); }
-  else {
-    isAiResponding = false;
-    bool kws = (millis() < kwsActiveUntil) || isListeningForCommand;
-    for (int i = 0; i < 16; i++) {
-      float target;
-      if (kws) target = 24.0f;
-      else if (micMuted) target = 2.0f;
-      else if (micReady) target = cf(3.0f + micRms / 150.0f, 2.0f, 24.0f);
-      else target = 2.0f;
-      kwsBars[i] = kwsBars[i] * 0.6f + target * 0.4f;
-      int hgt = ci((int)kwsBars[i], 0, 24);
-      display.fillRect(i * 8 + 1, 44 - hgt, 5, hgt, OLED_WHITE);
-    }
-    display.drawLine(0, 45, 128, 45, OLED_WHITE);
-    if (!micReady) { display.setCursor(4, 54); display.print("Mic unavailable"); }
-    else if (micMuted) { display.setCursor(4, 54); display.print("Mic muted"); }
-    else if (kws) { display.setFont(&FreeSansBold9pt7b); display.setCursor(28, 56); display.print("LISTENING!"); }
-    else if (KWS_MODEL_INTEGRATED) { display.setCursor(4, 54); display.print("Say \"Hey Pal\"!"); }
-    else drawFitLine("Level only; no speech model", 54);
-  }
-}
 #if ENABLE_WEATHER
 void drawWeatherCard() {
   drawHeader("WEATHER");
@@ -3191,7 +3467,7 @@ void drawWeatherCard() {
     drawFitLine("Check WiFi, city, API key", 48);
     return;
   }
-  display.drawBitmap(96, 19, getMiniIcon(weather.main), 16, 16, OLED_WHITE);
+  drawClippedBitmap(109, 19, getMiniIcon(weather.main), 16, 16, OLED_WHITE);
   drawFitLine(cityUpper, 22, 15);
   char line[32];
   snprintf(line, sizeof(line), "Outside: %.1f C", weather.temperature); drawFitLine(line, 34);
@@ -3211,15 +3487,16 @@ void drawForecastPage() {
     drawFitLine("Check WEATHER page", 42);
     return;
   }
-  display.drawLine(42, 18, 42, 61, OLED_WHITE); display.drawLine(85, 18, 85, 61, OLED_WHITE);
+  display.drawLine(42, 18, 42, 60, OLED_WHITE); display.drawLine(85, 18, 85, 60, OLED_WHITE);
   for (int i = 0; i < 3; i++) {
-    int centerX = i * 43 + 21;
-    display.setFont(NULL);
+    const int left[] = { 1, 44, 87 };
+    const int width[] = { 40, 40, 40 };
+    int centerX = left[i] + width[i] / 2;
     const char* d = weather.forecast[i].dayName;
-    display.setCursor(centerX - (int)(strlen(d) * 3), 18); display.print(d);
-    display.drawBitmap(centerX - 8, 29, getMiniIcon(weather.forecast[i].iconType), 16, 16, OLED_WHITE);
+    drawOledTextFit(display, d, centerX, 19, nullptr, width[i], OLED_TEXT_CENTER);
+    drawClippedBitmap(centerX - 8, 30, getMiniIcon(weather.forecast[i].iconType), 16, 16, OLED_WHITE);
     char tBuf[8]; snprintf(tBuf, sizeof(tBuf), "%d C", weather.forecast[i].temp);
-    display.setCursor(centerX - (int)(strlen(tBuf) * 3), 50); display.print(tBuf);
+    drawOledTextFit(display, tBuf, centerX, 50, nullptr, width[i], OLED_TEXT_CENTER);
   }
 }
 #endif
@@ -3228,35 +3505,42 @@ void drawTimerPage() {
   int mins = timerRemainingSec / 60, secs = timerRemainingSec % 60;
   char timeBuf[12];
   snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", mins, secs);
-  display.setFont(NULL); display.setTextColor(OLED_WHITE);
+  display.setTextColor(OLED_WHITE);
   const char* state = isTimerAlarm ? "TIME UP" : timerRunning ? "RUNNING" :
                       (timerRemainingSec < timerDurationSec ? "PAUSED" : "READY");
-  display.setCursor(64 - (int)(strlen(state) * 3), 23); display.print(state);
-  display.setFont(&FreeSansBold18pt7b);
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(timeBuf, 0, 0, &x1, &y1, &w, &h);
-  display.setCursor(max(0, (SCREEN_WIDTH - (int)w) / 2), 57); display.print(timeBuf);
-  display.setFont(NULL);
+  drawOledTextFit(display, state, 64, 21, nullptr, 126, OLED_TEXT_CENTER);
+  drawOledTextFit(display, timeBuf, 64, 33, &FreeSansBold18pt7b, 126, OLED_TEXT_CENTER);
 }
 
 void drawTimerOverlay() {
   if (!timerRunning || currentPage == PAGE_TIMER) return;
   int mins = timerRemainingSec / 60, secs = timerRemainingSec % 60;
   char buf[8]; snprintf(buf, sizeof(buf), "%02d:%02d", mins, secs);
-  int w = 58, h = 12;
-  int x = SCREEN_WIDTH - w - 2, y = 2;
+  int w = 67, h = 12;
+  int x = 60, y = 2;
   display.fillRect(x, y, w, h, OLED_BLACK); display.drawRect(x, y, w, h, OLED_WHITE);
-  display.setFont(NULL); display.setTextColor(OLED_WHITE); display.setCursor(x + 3, y + 2); display.print("RUN "); display.print(buf);
+  display.setTextColor(OLED_WHITE);
+  char label[16]; snprintf(label, sizeof(label), "RUN %s", buf);
+  drawOledTextFit(display, label, x + 3, y + 2, nullptr, w - 6, OLED_TEXT_LEFT);
 }
 
 void playBootAnimation() {
-  display.setTextColor(OLED_WHITE); int cx = 64, cy = 32;
-  for (int r = 0; r < 80; r += 4) { display.clearDisplay(); display.fillCircle(cx, cy, r, OLED_WHITE); display.display();  delay(10); }
-  for (int r = 0; r < 80; r += 4) { display.clearDisplay(); display.fillCircle(cx, cy, 80, OLED_WHITE); display.fillCircle(cx, cy, r, OLED_BLACK); display.display();  delay(10); }
-  display.setFont(&FreeSansBold9pt7b); const char* bootText = "DeskPal";
-  int16_t x1, y1; uint16_t w, h;
-  display.getTextBounds(bootText, 0, 0, &x1, &y1, &w, &h);
-  display.clearDisplay(); display.setCursor((SCREEN_WIDTH - (int)w) / 2, 36); display.print(bootText); display.display();
+  display.setTextColor(OLED_WHITE);
+  for (int step = 0; step < 20; ++step) {
+    const int w = 2 + step * 6, h = 2 + step * 3;
+    display.clearDisplay();
+    display.fillRect((SCREEN_WIDTH - w) / 2, (SCREEN_HEIGHT - h) / 2, w, h, OLED_WHITE);
+    display.display(); delay(10);
+  }
+  for (int step = 19; step >= 0; --step) {
+    const int w = 2 + step * 6, h = 2 + step * 3;
+    display.clearDisplay();
+    display.fillRect((SCREEN_WIDTH - w) / 2, (SCREEN_HEIGHT - h) / 2, w, h, OLED_BLACK);
+    display.display(); delay(10);
+  }
+  display.clearDisplay(); display.setTextColor(OLED_WHITE);
+  drawOledTextFit(display, "DeskPal", 64, 20, &FreeSansBold9pt7b, 126, OLED_TEXT_CENTER);
+  display.display();
   unsigned long start = millis();
   while (millis() - start < 1200) {  delay(20); }
 }
@@ -3272,8 +3556,10 @@ void setup() {
   Wire.begin(SDA_PIN, SCL_PIN);
   Serial.println("I2C scan:");
   for (byte a = 1; a < 127; a++) { Wire.beginTransmission(a); if (Wire.endTransmission() == 0) { Serial.print("  found 0x"); Serial.println(a, HEX); } }
-  pinMode(TOUCH_PIN, INPUT); pinMode(BTN_MICMUTE_PIN, INPUT_PULLUP); pinMode(SWITCH_PIN, INPUT_PULLUP);
+  pinMode(TOUCH_PIN, INPUT); pinMode(BTN_NAV_PIN, INPUT_PULLUP); pinMode(SWITCH_PIN, INPUT_PULLUP);
   pinMode(BUZZER_PIN, OUTPUT); digitalWrite(BUZZER_PIN, LOW);
+  quietMode = digitalRead(SWITCH_PIN) == LOW;
+  micMuted = quietMode;
 #if ENABLE_BATTERY
   pinMode(BATT_PIN, INPUT); analogReadResolution(12);
 #endif
@@ -3296,7 +3582,7 @@ void setup() {
   loadPairCode();
 #endif
 #if ENABLE_WEATHER
-  if (forceConfig) {
+  if (forceConfig || (AUTO_PORTAL_WHEN_NO_WIFI && knownNetCount == 0)) {
     bmpOk = bme.begin() || bme.begin(0x76);
     Serial.println(bmpOk ? "BME280 OK" : "BME280 NOT FOUND - check wiring!");
     startConfigPortal(); return;
@@ -3312,11 +3598,13 @@ void setup() {
     Serial.print("Raw: "); Serial.println(bme.readTemperature());
     Serial.print("Adj: "); Serial.println(bme.readTemperature() + tempOffsetC);
   }
+#if ENABLE_MIC
+  micInit();
+#endif
   lastInteraction = millis(); readSensors(); generateInsights(); batteryPct = readBatteryPct();
   lastSensorRead = millis(); lastInsightGen = millis(); lastPageSwitch = millis();
-  initMic();
 #if ENABLE_WEATHER
-  if (wifiSsid.length() > 0) {
+  if (knownNetCount > 0) {
     wifiWant = true; WiFi.mode(WIFI_STA); WiFi.setSleep(false); WiFi.setAutoReconnect(false); WiFi.persistent(false);
     startWifiConnection(millis());
     Serial.println("Wi-Fi connecting in background");
@@ -3329,8 +3617,9 @@ void updateTimer() {
   if (timerRunning) {
     unsigned long now = millis();
     if (now - timerLastTick >= 1000) {
-      timerRemainingSec--;
-      timerLastTick = now;
+      const unsigned long ticks = (now - timerLastTick) / 1000UL;
+      timerRemainingSec = ticks >= timerRemainingSec ? 0 : timerRemainingSec - ticks;
+      timerLastTick += ticks * 1000UL;
       if (timerRemainingSec == 0) {
         timerRunning = false;
         timerLock = false;
@@ -3343,6 +3632,28 @@ void updateTimer() {
   if (isTimerAlarm) {
     static unsigned long lastBeep = 0;
     if (millis() - lastBeep > 800) { buzzAlert(); lastBeep = millis(); }
+  }
+}
+
+static void emitStateChanges() {
+  static int lastPg = -1, lastComfort = -1, lastQuiet = -1, lastSensors = -1;
+  static const char* const PAGE_LABELS[] = {"Eyes","Clock","Weather","Forecast","Room","Insights","Voice","Timer"};
+  char m[56];
+  if (currentPage != lastPg) {
+    if (lastPg >= 0 && currentPage >= 0 && currentPage < 8) { snprintf(m, sizeof(m), "Screen changed to %s", PAGE_LABELS[currentPage]); emitEvent("Screen", m); }
+    lastPg = currentPage;
+  }
+  if (sensorsOk && comfortClass != lastComfort) {
+    if (lastComfort >= 0) { snprintf(m, sizeof(m), "Room comfort is now %s", comfortNames[comfortClass]); emitEvent("Room", m); }
+    lastComfort = comfortClass;
+  }
+  if ((int)quietMode != lastQuiet) {
+    if (lastQuiet >= 0) emitEvent("Switch", quietMode ? "Quiet mode on (buzzer off)" : "Quiet mode off");
+    lastQuiet = quietMode;
+  }
+  if ((int)sensorsOk != lastSensors) {
+    if (lastSensors >= 0) emitEvent("Sensor", sensorsOk ? "Room sensor online" : "Room sensor offline");
+    lastSensors = sensorsOk;
   }
 }
 
@@ -3371,7 +3682,10 @@ void loop() {
     triggerMiniAI();
   }
   if (OLED_TIMEOUT_MS > 0 && !screenOff && now - lastInteraction > OLED_TIMEOUT_MS) { DISPLAY_OFF(); screenOff = true; }
-  handleInputs(); liftCheck(); processAudio(); updateTimer(); updateBuzzer();
+  handleInputs(); liftCheck(); updateTimer(); updateBuzzer(); emitStateChanges();
+#if ENABLE_MIC
+  micTick(now);
+#endif
 #if ENABLE_WEATHER
   wifiTick(now);
   mqttTick(now);
@@ -3395,7 +3709,6 @@ void loop() {
     case PAGE_CLOCK: drawClock(); break;
     case PAGE_ENV: drawEnvPage(); break;
     case PAGE_INSIGHTS: drawInsightsPage(); break;
-    case PAGE_KWS: drawKwsPage(); break;
 #if ENABLE_WEATHER
     case PAGE_WEATHER: drawWeatherCard(); break;
     case PAGE_FORECAST: drawForecastPage(); break;

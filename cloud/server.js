@@ -1,7 +1,11 @@
 import 'dotenv/config';
+import dns from 'node:dns';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { MongoClient } from 'mongodb';
+
+dns.setServers(['1.1.1.1', '8.8.8.8']);
+
 
 const port = Number(process.env.PORT || 8787);
 const mongoUri = process.env.MONGODB_URI;
